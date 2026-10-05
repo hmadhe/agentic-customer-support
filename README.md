@@ -4,7 +4,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 0 of 10 complete (project setup and first LLM call). See the [roadmap](#roadmap).
+> **Status:** Milestone 1 of 10 complete. The assistant classifies customer messages with an LLM and routes them through a LangGraph workflow. See the [roadmap](#roadmap).
 
 ---
 
@@ -46,10 +46,10 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 |---|---|---|
 | **Python 3.11** | Language | ✅ In use |
 | **Ollama + `qwen2.5:3b`** | Runs the LLM locally on the CPU, free and offline | ✅ In use |
-| **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model) |
-| **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings) |
+| **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model, prompt template, structured output) |
+| **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings, LLM output schema, graph state) |
+| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (2-node graph) |
 | **pytest** | Automated tests | ✅ In use |
-| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ⏳ Milestone 1 |
 | **Chroma** | Local vector store for document search (RAG) | ⏳ Milestone 2 |
 | **SQLite** | Mock order database and support tickets | ⏳ Milestones 4–5 |
 | **FastAPI** | HTTP API that exposes the assistant | ⏳ Milestone 7 |
@@ -101,7 +101,14 @@ flowchart TD
     E --> END
 ```
 
-The graph grows in stages. Milestone 1 starts with just `START → classify_intent → respond → END`.
+The graph grows in stages. **The current graph (Milestone 1)** is the first, simplest version:
+
+```mermaid
+flowchart LR
+    START([START]) --> C[classify_intent<br/>LLM → IntentClassification]
+    C --> R[respond<br/>fixed reply per intent]
+    R --> END([END])
+```
 
 ---
 
@@ -112,11 +119,17 @@ agentic-customer-support/
 ├── app/                  # Application code (the importable Python package)
 │   ├── __init__.py       # Marks app/ as a package so `from app... import` works
 │   ├── config.py         # Settings: reads .env and validates it with Pydantic
-│   └── llm.py            # get_llm(): the single place where the LLM is created
+│   ├── llm.py            # get_llm(): the single place where the LLM is created
+│   ├── schemas.py        # Pydantic models: Intent, Sentiment, IntentClassification
+│   ├── classifier.py     # Prompt + LLM that turns a message into an IntentClassification
+│   └── graph.py          # LangGraph workflow: state, nodes and build_graph()
 ├── scripts/
-│   └── hello_llm.py      # Smoke test: makes one real call to the LLM
+│   ├── hello_llm.py      # Smoke test: makes one real call to the LLM
+│   └── chat.py           # Command-line chat: type a message, see intent and reply
 ├── tests/
-│   └── test_llm.py       # Unit test: checks the LLM is configured from settings
+│   ├── test_llm.py              # Unit test: the LLM is configured from settings
+│   ├── test_graph.py            # Unit tests: graph wiring and schema validation (fake classifier, no LLM)
+│   └── test_classifier_llm.py   # Real-model tests: classification accuracy (run with -m llm)
 ├── .env.example          # Template for your local .env (committed to git)
 ├── .gitignore            # Keeps .env, .venv/ and caches out of git
 ├── pytest.ini            # pytest configuration
@@ -225,12 +238,27 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected:
+Expected: `8 passed, 16 deselected`. The 16 deselected tests call the real model and are skipped by default. See [Testing](#testing).
+
+### 8. Chat with the assistant
+
+```bash
+python -m scripts.chat
+```
 
 ```
-tests/test_llm.py::test_get_llm_uses_settings PASSED          [100%]
-1 passed
+VoltCart support (type 'quit' to exit)
+
+You: Where is my order #1042?
+  [intent=order_issue sentiment=neutral order_id=1042]
+Bot: I can help with your order. Let me check its details.
+
+You: How long does shipping take?
+  [intent=policy_question sentiment=neutral order_id=None]
+Bot: Good question about our policies. I'll look that up for you.
 ```
+
+The line in brackets shows how the LLM classified the message. The reply is a fixed placeholder for now; real answers arrive with RAG and tools in later milestones. Each message takes about 4 seconds on a CPU.
 
 ---
 
@@ -272,23 +300,64 @@ It also takes an optional `settings` argument. Tests use it to pass custom setti
 
 It makes one real request to the model, then prints the reply, the time it took and the token counts. Its job is to prove that everything works end to end: Python, the virtual environment, settings, LangChain, Ollama and the model.
 
+### `app/schemas.py`: the contract for LLM output
+
+`IntentClassification` is a Pydantic model with three fields:
+
+| Field | Type | Values |
+|---|---|---|
+| `intent` | `Intent` enum | `policy_question`, `order_issue`, `human_request`, `greeting`, `out_of_scope` |
+| `sentiment` | `Sentiment` enum | `positive`, `neutral`, `negative` |
+| `order_id` | text or `None` | Digits only, for example `"1042"` |
+
+Because `intent` is an enum, the rest of the code can rely on it being one of exactly five values. Routing never has to handle free text like *"I think this is about shipping"*.
+
+There is deliberately **no `confidence` field**. A small model's self-reported confidence (for example, "0.92") is not calibrated: it's a number the model makes up, so routing on it would look smart but be unreliable.
+
+### `app/classifier.py`: message → classification
+
+The classifier is a LangChain chain: `prompt | llm.with_structured_output(IntentClassification)`.
+
+- **The prompt** defines each intent and adds tie-break rules for the cases the model got wrong during development (see the [development log](#development-log)).
+- **`with_structured_output`** sends the Pydantic schema to Ollama, which uses **constrained decoding**: while generating, the model can only produce tokens that match the schema. So the output is always valid JSON with a valid intent. The model can still pick the *wrong* intent, but never an *invalid* one. The result is then parsed into an `IntentClassification` object.
+
+### `app/graph.py`: the LangGraph workflow
+
+- **`SupportState`** is a Pydantic model holding the data that flows through the graph: the customer `message`, the `classification` and the `response`. Each node returns **only the fields it changes**, and LangGraph merges them into the state.
+- **`classify_intent`** calls the classifier and stores its result.
+- **`respond`** looks up a fixed reply for the intent. It will be replaced by real RAG, tool and escalation branches in later milestones.
+- **`build_graph(classifier=None)`** connects `START → classify_intent → respond → END` and compiles the graph. You can pass in a different classifier, which is how the tests swap in a fake one so they don't need the LLM.
+
+> **Gotcha:** the state is a Pydantic model, but `graph.invoke(...)` returns a plain **dict**. Use `result["response"]`, not `result.response`.
+
+### `scripts/chat.py`: command-line chat
+
+A loop that reads a message, runs the graph and prints the classification and the reply.
+
 ---
 
 ## Testing
 
-| Test | What it checks | Calls the LLM? |
-|---|---|---|
-| `test_get_llm_uses_settings` | `get_llm()` builds a `ChatOllama` with the model, URL and temperature from settings | No |
+There are two kinds of tests:
 
-**Why the test does not call the LLM:** LLM calls are slow, need Ollama running, and do not return exactly the same text every time. Unit tests should be fast and give the same result on every run, so they check *our* code (here, the wiring), not the model's wording. Tests that check the model's actual behaviour belong in the evaluation milestone.
+| Kind | Files | Calls the LLM? | Speed | Command |
+|---|---|---|---|---|
+| **Unit tests** | `test_llm.py`, `test_graph.py` | No (fake classifier) | About 2 seconds | `python -m pytest` |
+| **Real-model tests** | `test_classifier_llm.py` | Yes (needs Ollama) | About 1 minute | `python -m pytest -m llm` |
 
-`pytest.ini` sets `pythonpath = .` so that tests can `import app` from the project root.
+**Unit tests** check *our* code: the LLM is configured from settings, every intent gets a reply, the graph passes the customer's message to the classifier, and the schema rejects an unknown intent. They use a **fake classifier** that always returns a fixed answer, because real LLM calls are slow, need Ollama running and may not give the same answer every time.
+
+**Real-model tests** check *the model's behaviour*: 14 messages with their expected intents, order-ID extraction and negative-sentiment detection. They include **regression cases**: messages the model got wrong during development, kept so the same bug can't silently come back after a prompt change.
+
+**How the split works:** `pytest.ini` marks real-model tests with `llm` and skips them by default (`addopts = -m "not llm"`). Running `pytest -m llm` overrides that. `pythonpath = .` lets tests `import app` from the project root.
+
+**Rule of thumb:** after changing the **prompt**, run `pytest -m llm`, because a fix for one message can break another.
 
 ---
 
 ## Troubleshooting
 
-Each error below was actually hit during development.
+Each problem below was hit or reproduced during development.
 
 | Error | Cause | Fix |
 |---|---|---|
@@ -297,6 +366,8 @@ Each error below was actually hit during development.
 | `ollama._types.ResponseError: model 'xyz' not found (status code: 404)` | The model in `OLLAMA_MODEL` hasn't been downloaded | Run `ollama pull <model>` and check with `ollama list` |
 | `Error: listen tcp 127.0.0.1:11434: bind: Only one usage of each socket address ...` from `ollama serve` | Ollama is **already running**, usually started by the desktop app | Nothing to fix. Use the server that is already running |
 | The first LLM call takes about 30 seconds | Cold start: Ollama is loading the model into RAM. It unloads it again after about 5 minutes idle | Expected. Later calls take about 4 seconds |
+| The classifier picks a wrong but valid intent | Usually two intent definitions in the prompt overlap, so the model matches on keywords | Probe several similar messages to confirm a pattern, sharpen the definitions in `app/classifier.py`, add the messages to `tests/test_classifier_llm.py`, and run `pytest -m llm` |
+| `AttributeError: 'dict' object has no attribute 'response'` | `graph.invoke()` returns a dict, even though the state is a Pydantic model | Use `result["response"]` |
 
 ---
 
@@ -329,6 +400,32 @@ Every milestone follows the same cycle:
 - **The context window is 4096 tokens by default.** RAG chunks and chat history will have to fit inside it, though it can be raised later.
 - **Ollama must be running** before the app is started.
 
+### Milestone 1: intent classifier and first LangGraph graph ✅
+
+**Goal:** turn a customer message into a validated, structured classification and route it through a LangGraph workflow.
+
+**Built:**
+- Pydantic schemas: the `Intent` and `Sentiment` enums and the `IntentClassification` model
+- A classifier: a prompt plus `with_structured_output`, using Ollama's constrained decoding
+- The first LangGraph graph, `START → classify_intent → respond → END`, with a Pydantic state
+- A command-line chat (`python -m scripts.chat`)
+- 7 new unit tests using a fake classifier, and 16 real-model tests that only run with `-m llm`
+
+**Problems hit and how they were fixed:**
+1. **Off-topic questions were classified as `greeting`.** "What's the capital of France?", "What's the weather tomorrow?" and "Write me a poem" all became `greeting`. Probing 5 off-topic messages showed a pattern (3 of 5 wrong), not a one-off. **Cause:** `greeting` was defined as "a greeting *or small talk*", and casual questions count as small talk. **Fix:** narrowed `greeting` to "ONLY hi, thanks or bye", gave `out_of_scope` concrete examples, and added the rule "a message with a question or request is never a greeting". Result: 5 of 5 correct.
+2. **General shipping questions were classified as `order_issue`.** "How long does shipping take?" failed in the new tests, and 4 of 5 similar questions failed the same way (the same answer 3 out of 3 times, so it wasn't random). **Cause:** `order_issue` mentioned "delivery" and `policy_question` mentioned "shipping", so the small model matched on keywords. The real deciding question, "does the customer refer to *their own* order?", was only implied. **Fix:** said it explicitly ("THEIR OWN order: an order number, 'my order', 'my package'…") and added it as a rule. Result: 8 of 8 correct, including "My package still hasn't arrived" (no order number).
+3. **The expected invalid-output errors never happened.** I'd predicted the 3B model would sometimes return invalid intents or broken JSON. Investigating why it didn't showed that `with_structured_output` passes the schema to Ollama, which restricts generation to valid output. **Lesson:** with this setup, failures are about meaning (a valid but wrong intent), not structure.
+
+**What we learned:** both real bugs were **prompt ambiguity**, not code bugs. The method that worked: notice one failure, probe similar messages to find the pattern, fix the definition, then re-run *every* real-model test, because a prompt change can break other cases.
+
+**Known limitations and open questions:**
+- **Replies are placeholders.** `respond` returns a fixed sentence per intent.
+- **Angry customers are classified as `human_request`** even when they don't ask for a human (for example, "This is the third time I'm asking, your service is terrible!"). The `sentiment` field is correct (`negative`), so the escalation rules in Milestone 5 can use it directly.
+- **No error handling.** If Ollama stops, the chat crashes with a raw error.
+- **The tests are a small sample** (14 intent cases). Real accuracy will be measured on a larger dataset in Milestone 9.
+- **Each message is classified on its own.** There's no memory of earlier messages until Milestone 6.
+- **About 4 seconds per message** on the CPU.
+
 ---
 
 ## Roadmap
@@ -336,8 +433,8 @@ Every milestone follows the same cycle:
 | # | Milestone | What it adds | Status |
 |---|---|---|---|
 | 0 | Setup | Project skeleton, settings, first LLM call, pytest | ✅ Done |
-| 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent → respond` | ⏳ Next |
-| 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ⬜ |
+| 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent → respond` | ✅ Done |
+| 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ⏳ Next |
 | 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ⬜ |
 | 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, agent ⇄ tools loop | ⬜ |
 | 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ⬜ |
