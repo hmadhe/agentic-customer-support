@@ -1,0 +1,4 @@
+langchain-core==1.6.6
+langchain-ollama==1.1.0
+pydantic-settings==2.15.0
+pytest==9.1.1
