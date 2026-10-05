@@ -12,6 +12,16 @@ def no_real_models_in_unit_tests(request, monkeypatch):
 
 
 @pytest.fixture(scope="session")
+def order_db(tmp_path_factory):
+    """A seeded order database in a temporary folder, dated relative to today like the real one."""
+    from app.orders import seed_db
+
+    db_path = tmp_path_factory.mktemp("orders") / "voltcart.db"
+    seed_db(db_path)
+    return db_path
+
+
+@pytest.fixture(scope="session")
 def policy_store(tmp_path_factory):
     """For real-model tests: a vector store built once from the real policy documents.
 

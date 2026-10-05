@@ -4,7 +4,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 3 of 10 complete. A LangGraph workflow classifies each customer message and **routes policy questions to RAG**, which answers from VoltCart's documents and cites its sources. Other intents still get placeholder replies until tools and escalation are added. See the [roadmap](#roadmap).
+> **Status:** Milestone 4 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite, checks return eligibility and searches the policies. Human requests, greetings and off-topic messages still get placeholder replies until escalation is added. See the [roadmap](#roadmap).
 
 ---
 
@@ -49,10 +49,10 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 | **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search | ✅ In use |
 | **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model, prompts, structured output, text splitters, embeddings, Chroma wrapper) |
 | **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings, LLM output schemas, graph state, retrieved chunks) |
-| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (4 nodes, conditional routing) |
+| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (conditional routing, agent ⇄ tools loop with `ToolNode`) |
 | **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
 | **pytest** | Automated tests | ✅ In use |
-| **SQLite** | Mock order database and support tickets | ⏳ Milestones 4–5 |
+| **SQLite** | Mock order database (support tickets come in Milestone 5) | ✅ In use (orders) |
 | **FastAPI** | HTTP API that exposes the assistant | ⏳ Milestone 7 |
 
 ---
@@ -102,7 +102,7 @@ flowchart TD
     E --> END
 ```
 
-The graph grows in stages. **The current graph (Milestone 3):**
+The graph grows in stages. **The current graph (Milestone 4):**
 
 ```mermaid
 flowchart LR
@@ -110,7 +110,13 @@ flowchart LR
     C -->|policy_question| R[retrieve<br/>top 4 policy chunks]
     R --> A[answer<br/>PolicyAnswer with sources]
     A --> END([END])
-    C -->|any other intent| P[respond<br/>placeholder reply]
+    C -->|order_issue| G[agent<br/>LLM with tools]
+    G -->|tool calls| T[tools<br/>get_order_status<br/>check_return_eligibility<br/>search_policies]
+    T --> G
+    G -->|answer| END
+    G -->|more than 3 tool rounds| F[fallback]
+    F --> END
+    C -->|other intents| P[respond<br/>placeholder reply]
     P --> END
 ```
 
@@ -148,18 +154,24 @@ agentic-customer-support/
 │   ├── vector_store.py   # Embedding model + Chroma collection, shared by ingestion and retrieval
 │   ├── ingest.py         # Load policy docs → split into chunks → embed → store
 │   ├── retriever.py      # Question → most relevant chunks with source and section
-│   └── answer.py         # Question + chunks → answer with sources, or "insufficient information"
+│   ├── answer.py         # Question + chunks → answer with sources, or "insufficient information"
+│   ├── orders.py         # SQLite order database + return-eligibility rules (pure Python)
+│   ├── tools.py          # LangChain tools the agent can call, with Pydantic-validated inputs
+│   └── agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
 ├── data/
 │   └── policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
 ├── scripts/
 │   ├── hello_llm.py      # Smoke test: makes one real call to the LLM
 │   ├── chat.py           # Command-line chat: type a message, see intent and reply
 │   ├── ingest.py         # Builds the vector store from data/policies/
+│   ├── seed_orders.py    # Creates the mock order database data/voltcart.db
 │   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
 ├── tests/
-│   ├── conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store
+│   ├── conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store and order DB
 │   ├── test_llm.py              # Unit test: the LLM is configured from settings
-│   ├── test_graph.py            # Unit tests: routing for every intent, with fake classifier/retriever/answerer
+│   ├── test_graph.py            # Unit tests: every route, the agent loop and its safeguards (scripted fake agent)
+│   ├── test_orders.py           # Unit tests: order database and return-eligibility rules
+│   ├── test_tools.py            # Unit tests: tool inputs and outputs, invented-order-ID detection
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
@@ -180,6 +192,7 @@ These files are created locally and **never committed**:
 | `.venv/` | The project's private Python environment with all dependencies installed |
 | `.env` | Your local settings, copied from `.env.example`. Hosted LLM API keys would go here too, so it is never committed |
 | `chroma_db/` | The vector store built by `python -m scripts.ingest`. It is rebuilt from `data/policies/`, so it doesn't need to be in git |
+| `data/voltcart.db` | The mock order database created by `python -m scripts.seed_orders`. Its dates are relative to the day it was seeded |
 
 ---
 
@@ -276,15 +289,17 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `21 passed, 40 deselected`. The 40 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `53 passed, 43 deselected`. The 43 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
-### 8. Build the policy vector store
+### 8. Build the policy vector store and the order database
 
 ```bash
 python -m scripts.ingest
+python -m scripts.seed_orders
 ```
 
-This only needs to run again when a document in `data/policies/` changes, or when the embedding setup changes.
+- **`ingest`** only needs to run again when a document in `data/policies/` changes, or when the embedding setup changes.
+- **`seed_orders`** creates 12 mock orders with dates relative to today (for example, "delivered 10 days ago"). Re-run it to reset the orders, or if return-window answers start to look out of date. The chat refuses to start without this database.
 
 ### 9. Chat with the assistant
 
@@ -300,12 +315,26 @@ You: How much is express shipping?
 Bot: $14.99
   [sources=['shipping.md'] answered=True]
 
-You: Where is my order #1042?
-  [intent=order_issue sentiment=neutral order_id=1042]
-Bot: I can help with your order. Let me check its details.
+You: Can I return the laptop from order 1001?
+  [intent=order_issue sentiment=neutral order_id=1001]
+Bot: You can return the laptop from order 1001 until October 10, 2026. A 15% restocking fee applies.
+  [tool: check_return_eligibility({'order_id': '1001'})]
 ```
 
-The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. Other intents still get a fixed placeholder reply until tools (Milestone 4) and escalation (Milestone 5) are added. On this 8 GB machine a policy answer takes about 15–20 seconds and other replies 2–6 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
+The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. **Order questions are handled by the agent**, with the tools it called shown underneath. Human requests, greetings and off-topic messages still get a fixed placeholder reply until escalation (Milestone 5). On this 8 GB machine a policy or order answer takes about 15–30 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
+
+**Mock orders to try:**
+
+| Order | Product | Situation |
+|---|---|---|
+| 1001 | Laptop, opened, delivered 10 days ago | Returnable (15-day window), 15% restocking fee |
+| 1002 | Laptop, opened, delivered 20 days ago | Return window over |
+| 1004 | Earbuds, opened | Not returnable (hygiene) |
+| 1005, 1042 | TV, headphones | Shipped, with tracking numbers |
+| 1006 | Drone, opened | Returnable (30-day window), 15% restocking fee |
+| 1007 | Tablet | Still processing |
+| 1008 / 1009 | Gift card / clearance camera | Not returnable |
+| 2231 | Over-ear headphones, delivered yesterday | Returnable; good for "arrived broken" questions |
 
 ### 10. Ask the RAG pipeline directly (optional)
 
@@ -405,18 +434,62 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 
 ### `app/graph.py`: the LangGraph workflow
 
-- **`SupportState`** is a Pydantic model holding the data that flows through the graph: the customer `message`, its `classification`, the retrieved `chunks`, the `policy_answer` (answer, sources, answered) and the final `response`. Each node returns **only the fields it changes**, and LangGraph merges them into the state.
+- **`SupportState`** is a Pydantic model holding the data that flows through the graph:
+  - the customer `message` and its `classification`
+  - for policy questions: the retrieved `chunks` and the `policy_answer` (answer, sources, answered)
+  - for order questions: `messages`, the agent's conversation with its tools
+  - the final `response`
+
+  Each node returns **only the fields it changes**, and LangGraph merges them in. `messages` uses LangGraph's `add_messages` **reducer**, so a node's new messages are *appended* rather than replacing the list.
 - **Nodes:**
   - `classify_intent` calls the classifier.
-  - `retrieve` calls `retrieve()` from Milestone 2.
-  - `answer` calls `answer_question()` from Milestone 2 and copies its text into `response`.
-  - `respond` returns a placeholder reply for intents that don't have a real branch yet.
-- **Routing:** `route_by_intent` is a plain function that reads the classification and returns the name of the next node, `"retrieve"` for `policy_question` and `"respond"` for everything else. `add_conditional_edges` connects it. Because routing reads an **enum**, it never has to interpret free text.
-- **`build_graph(classifier=None, retriever=None, answerer=None)`** creates the real vector store and answer chain **once**, when the graph is built, not inside the nodes, so each message doesn't open a new Chroma connection. Any of the three can be swapped for a fake, which is how the unit tests run without models.
+  - `retrieve` and `answer` run the RAG pipeline from Milestone 2.
+  - `agent` calls the tool-calling LLM. If its reply contains no tool calls, that reply becomes the `response`.
+  - `tools` is LangGraph's prebuilt `ToolNode`. It runs the requested tools and adds their results as `ToolMessage`s.
+  - `fallback` gives up politely after too many tool rounds.
+  - `respond` returns a placeholder reply for intents without a real branch yet.
+- **Routing:**
+  - `route_by_intent` sends `policy_question` to `retrieve`, `order_issue` to `agent`, and everything else to `respond`.
+  - `route_after_agent` decides the loop: run the tools if the agent asked for any, finish if it answered, or go to `fallback` after more than 3 tool rounds.
+- **`build_graph(...)`** creates the real vector store, answer chain, tools and agent **once**. It accepts fakes for the classifier, retriever, answerer and agent, plus a `db_path`, which is how the unit tests run without models. It **refuses to start** if the order database doesn't exist.
 
 > **Gotchas:**
 > - The state is a Pydantic model, but `graph.invoke(...)` returns a plain **dict**. Use `result["response"]`, not `result.response`.
-> - That dict contains **only the fields a node wrote**. Pydantic defaults are left out, so after a placeholder reply `result["chunks"]` raises `KeyError`. Use `result.get("chunks")`.
+> - A **plain** field appears in that dict only once a node writes it, so after a placeholder reply `result["chunks"]` raises `KeyError`; use `result.get("chunks")`. A field **with a reducer**, like `messages`, is always present, starting as `[]`. (Milestone 3's README said "only fields a node wrote", which was only half right; Milestone 4's tests caught it.)
+
+### `app/orders.py`: the order database and return rules
+
+- **SQLite** file `data/voltcart.db` with one `orders` table: product, category, status, dates, `opened`, `final_sale`, total and tracking number. `seed_db()` recreates it with 12 orders whose dates are relative to today.
+- **`get_order()`** opens the database **read-only**. A normal `sqlite3.connect()` silently creates an empty file when the database is missing, which turned "you forgot to seed" into a confusing "no such table" error.
+- **`check_return_eligibility(order, today)`** applies `returns.md` **in Python**:
+  - not delivered yet → no
+  - gift card, final-sale item, or opened earbuds → no
+  - otherwise a 15-day window (opened laptop, tablet or phone) or a 30-day window, plus a 15% restocking fee for opened laptops, cameras and drones
+
+  `today` is a parameter, so tests can fix the date.
+
+**Why rules in code, not in the LLM?** "Is order 1001 still returnable?" means date arithmetic and rule lookups, and a 3B model gets those wrong. Python gets them right every time and can be tested exhaustively. The LLM's job is only to choose a tool and phrase the result.
+
+### `app/tools.py`: what the agent can call
+
+| Tool | Input | Returns |
+|---|---|---|
+| `get_order_status` | `order_id` | "Order 1042: Bose QuietComfort headphones. Status: shipped. Ordered on …. Tracking number: VC104200." |
+| `check_return_eligibility` | `order_id` | "Order 1001 can be returned until 2026-10-10. … A 15% restocking fee applies." or "Order 1004 cannot be returned. Reason: …" |
+| `search_policies` | `query` | The top **2** policy chunks, each labelled with its source file |
+
+- **Inputs are validated by Pydantic** (`OrderLookup`): a leading `#` is removed and non-digits are rejected, so `ORD-12` never reaches the database. An unknown number returns "No order found with number 9999." rather than an error.
+- **Outputs are short sentences containing only the facts that apply.** The first version returned the full JSON, and the model read out empty fields to the customer ("There is no return deadline, but you will not be charged a restocking fee").
+- **The tool and model descriptions** (the docstrings and field descriptions) are exactly what the LLM reads when deciding which tool to call.
+
+### `app/agent.py`: the agent and its safeguards
+
+- **`AGENT_PROMPT`** says to use the tools for facts, never guess, ask for a missing order number, and answer in 1–3 sentences.
+- **`build_agent(tools)`** is `llm.bind_tools(tools)`. The chat model now sees the tool schemas and can reply with tool calls.
+- **Three safeguards in code** don't rely on the model obeying the prompt:
+  1. **Invented order IDs:** before any tool runs, `invented_order_ids()` checks that every requested `order_id` appears in the customer's message. If one doesn't, nothing is looked up and the customer is asked for their order number. This was added because qwen invented `123456` despite the prompt.
+  2. **Tool-round limit:** at most 3 rounds of tool calls per message, then a polite fallback reply.
+  3. **Tool errors:** `ToolNode(handle_tool_errors=True)` returns an exception to the agent as an error message instead of crashing the conversation.
 
 ### `scripts/chat.py`: command-line chat
 
@@ -479,11 +552,22 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py` | No (fakes) | About 5–10 seconds | `python -m pytest` | 21 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 3.5 minutes | `python -m pytest -m llm` | 37 passed, 3 xfailed |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py` | No (fakes) | About 4 seconds | `python -m pytest` | 53 passed |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 5 minutes | `python -m pytest -m llm` | 41 passed, 2 xfailed |
 
 **Unit tests** check *our* code, using fakes so they're fast and give the same result every time:
-- **Graph routing:** fake classifier, retriever and answerer. Every non-policy intent must get its placeholder **without** retrieval or answering being called (the fakes raise an error if they are). A policy question must go through retrieve and then answer with the right inputs, and an unanswered policy question must pass the "insufficient information" reply through.
+- **Graph routing:** fake classifier, retriever and answerer. Placeholder intents must skip RAG and tools (the fakes raise an error if called). A policy question must go through retrieve and then answer.
+- **Agent loop:** a **scripted fake agent** that returns pre-written replies, including tool calls, while the *real* tools run against a temporary order database. The tests check that:
+  - a requested tool runs and the agent's final reply is used
+  - an invented order ID is never looked up
+  - an agent that never stops calling tools is cut off after exactly 3 rounds
+  - a crashing tool is reported back instead of crashing the graph
+  - a missing database stops the graph at startup
+- **Orders and tools:**
+  - **Return rules:** every rule in `returns.md`, including the **boundary days** (day 30 allowed, day 31 not), with a fixed date.
+  - **Tool inputs:** `#1042` accepted, `ORD-12` rejected.
+  - **Tool outputs:** only the facts that apply, and only 2 chunks from `search_policies`.
+  - **Missing database:** a clear error, and no empty file created.
 - **Safety net (`conftest.py`):** for any test not marked `llm`, Ollama's address is changed to a closed port. If a unit test accidentally calls a real model, it fails within seconds with a connection error instead of quietly passing slowly.
 - **Ingestion and retrieval:** a **small controlled dataset** (Markdown files written into a temporary folder) and LangChain's `DeterministicFakeEmbedding`, where identical text always gives an identical vector. They check that each section becomes one chunk with the right `source` and `section`, that long sections keep their heading, that re-ingesting never duplicates chunks, that deleted documents disappear, and that retrieved chunks carry their metadata.
 - **Answering:** a fake answer chain. It checks that unretrieved sources are removed, that an unanswered result gets the fixed reply (using a real qwen output as the example), that no chunks means no LLM call, and that unparseable output doesn't crash.
@@ -492,10 +576,12 @@ There are two kinds of tests:
 - **Classifier:** 14 messages with expected intents, order-ID extraction and negative sentiment, including **regression cases** the model once got wrong.
 - **Retrieval:** 11 questions, each checking the **document ranked first** *and* that the **specific section** that answers it is in the top 4. They run against a fresh vector store built in a temporary folder, so they don't depend on your local `chroma_db/`.
 - **Answers:** 3 questions whose answers must contain the right fact (`14.99`, `15%`, `150`) and cite the right document, plus 3 questions **no document answers**, which must get the "insufficient information" reply.
-- **Whole graph:** a policy question answered with its source, an unanswerable policy question getting the "insufficient information" reply, and an order question skipping RAG.
-- **Shared test vector store:** the `policy_store` fixture in `conftest.py` builds one vector store from the policies **per test session**, in a temporary folder.
+- **Whole graph:**
+  - Policy questions: one answered with its source, and one unanswerable question getting the "insufficient information" reply.
+  - Order questions: a status lookup (tracking number in the answer), an eligible return (15% fee), a refused return (hygiene), a **missing order number** (it must ask, with no tool run), and a damaged item (it must use `search_policies` and mention the 48-hour rule).
+- **Shared test data:** fixtures in `conftest.py` build one vector store and one order database **per test session**, in temporary folders.
 
-**What `xfail` means:** three tests are marked *expected to fail*, because they describe known limitations we chose not to hide (see the Milestone [2](#milestone-2-standalone-rag-pipeline-) and [3](#milestone-3-routing-policy-questions-to-rag-) logs). pytest runs them and reports `XFAIL`. If one starts passing, for example after a model upgrade, pytest reports `XPASS`.
+**What `xfail` means:** two tests are marked *expected to fail*, because they describe known limitations we chose not to hide (see the [Milestone 2 log](#milestone-2-standalone-rag-pipeline-)). Milestone 3 had a third one, which Milestone 4 fixed. pytest runs them and reports `XFAIL`. If one starts passing, for example after a model upgrade, pytest reports `XPASS`.
 
 **Passing tests don't prove the RAG is accurate.** They cover 11 retrieval questions and 6 answer questions, all written by hand. Accuracy on a larger set of questions is measured in Milestone 9.
 
@@ -521,7 +607,11 @@ Each problem below was hit or reproduced during development.
 | The same chunk appears twice in the retrieved results | Ingestion ran more than once with an older version that only added chunks | Fixed: ingestion now empties the collection first. Re-run `python -m scripts.ingest` |
 | Retrieval suddenly gets worse with no error | The embedding setup changed (model or prefixes) but the stored vectors are still the old ones | Re-run `python -m scripts.ingest` after any embedding change |
 | `scripts.ask` returns nothing useful, or the collection holds 0 chunks | Ingestion failed partway through (for example, Ollama stopped) after the collection was emptied | Start Ollama and re-run `python -m scripts.ingest` |
-| `KeyError: 'chunks'` (or `'policy_answer'`) on a graph result | `graph.invoke()` only returns fields a node wrote. Placeholder replies never write `chunks` | Use `result.get("chunks")` |
+| `KeyError: 'chunks'` (or `'policy_answer'`) on a graph result | Plain state fields appear in the result only once a node writes them. Placeholder replies never write `chunks` | Use `result.get("chunks")` |
+| `FileNotFoundError: Order database not found ... Create it with: python -m scripts.seed_orders` | The order database was never created | Run `python -m scripts.seed_orders` |
+| `sqlite3.OperationalError: no such table: orders` | An empty `voltcart.db` was created by older code or another tool | Run `python -m scripts.seed_orders`, which recreates the table |
+| The bot asks for an order number although you mentioned your order | You described the order ("the laptop I bought") but didn't give its number, so the invented-ID guard won't let the agent guess one | Include the order number, for example "order 1001" |
+| Return-window answers look wrong (for example, "window ended" for a recent order) | The order dates are relative to the day the database was seeded, so they age | Re-run `python -m scripts.seed_orders` |
 | A unit test fails with `ConnectionError` | The test is calling a real model. The `conftest.py` safety net blocks that outside `llm` tests | Pass fakes into `build_graph(...)`, or mark the test `@pytest.mark.llm` |
 | Speed varies wildly (the same step takes 0.3 s once and 13 s the next time) | The machine is short of RAM and is paging memory to disk. On an 8 GB machine the two models plus VS Code and a browser don't fit | Close Chrome and other heavy apps while running the assistant |
 | A question takes about a minute and gets the "insufficient information" reply | qwen fell into a **runaway generation** and was cut off at `MAX_OUTPUT_TOKENS`, so its output couldn't be parsed | Expected occasionally with this small model. Before the cap, one runaway took 8 minutes |
@@ -692,6 +782,59 @@ Every milestone follows the same cycle:
 - **Each message is still handled on its own:** no conversation memory until Milestone 6.
 - The Milestone 2 limitations still apply (the warranty hallucination, occasional runaways and terse answers).
 
+### Milestone 4: tool calling ✅
+
+**Goal:** handle `order_issue` messages with an agent that calls tools to look up real order data and policies, in a LangGraph agent ⇄ tools loop.
+
+**Built:**
+- A SQLite order database with 12 mock orders, dated relative to the seeding day (`scripts/seed_orders.py`)
+- Return-eligibility rules **in Python**, taken from `returns.md`
+- Three tools with Pydantic-validated inputs: `get_order_status`, `check_return_eligibility` and `search_policies`. The last one reuses the RAG retriever and closes **Milestone 3's design gap**.
+- The agent loop: `llm.bind_tools()` + `ToolNode`, an `add_messages` state field, and `route_after_agent`
+- Safeguards in code: the invented-order-ID guard, a 3-round tool limit with a fallback reply, tool errors returned to the agent, and a startup check for the database
+- 32 new unit tests (return rules, tools, every agent-loop safeguard) and 5 new real end-to-end tests (7 in `test_graph_llm.py` in total)
+
+**Real run before the fixes (6 order messages):**
+
+| Message | Tool called | Result |
+|---|---|---|
+| Where is my order #1042? | `get_order_status(1042)` | ✅ shipped, tracking VC104200 |
+| Can I return the laptop from order 1001? | `check_return_eligibility(1001)` | ✅ until Oct 10, 15% fee |
+| Can I return the laptop I bought last week? | `get_order_status(`**`123456`**`)` | ❌ **invented an order ID**, then told the customer "I couldn't find your order with the order number 123456" |
+| My headphones from order 2231 arrived broken | `search_policies(...)` | ⚠️ right steps (report within 48 h, replacement or refund), then the **false** "If the headphones were opened, they cannot be returned" |
+| Can I return my earbuds? Order 1004. | `check_return_eligibility(1004)` | ⚠️ correctly refused, but added "There is no return deadline, but you will not be charged a restocking fee" |
+| Where is my order 9999? | `get_order_status(9999)` | ✅ "no order found" |
+
+The agent **picked the right tool every time.** The problems were in *what it did with the arguments and results*.
+
+**Problems hit and how they were fixed:**
+1. **An invented order ID.** The prompt already said "Never make one up", and the model did anyway. **Fix in code:** before any tool runs, every `order_id` must appear in the customer's message; otherwise nothing is looked up and the customer is asked for their order number. Re-run: "Could you please give me your order number?", with no tool called. The real `123456` case is a unit test.
+2. **The model read empty JSON fields aloud.** The tool returned the full JSON, including `return_deadline: null` and `restocking_fee_percent: 0`, and the model turned them into confusing sentences. **Fix:** tools return short sentences with only the facts that apply. Re-run: "Your earbuds (Order 1004) cannot be returned due to hygiene reasons."
+3. **Mixing unrelated policy rules (partly fixed).** `search_policies` passed 4 chunks, and the agent mixed the earbuds hygiene rule into a damaged-headphones answer. **Change:** the tool returns only the top 2 chunks. Measured on the same 2 messages:
+   - The *false* statement became a **true but irrelevant** one ("in-ear headphones and earbuds cannot be returned once opened").
+   - The cracked-laptop answer still adds "include all accessories and manuals".
+
+   Kept as a partial improvement. Cutting to 1 chunk would be tuning to these two messages.
+4. **A missing database crashed the whole conversation.** I tested it deliberately (a fresh clone without `seed_orders` is a likely mistake): the tool raised `OperationalError: no such table: orders`, `ToolNode` re-raised it, and `graph.invoke` failed. Worse, **`sqlite3.connect()` had silently created an empty 0-byte database file**, so the next run would see a file and still fail confusingly. **Fixes:**
+   - `build_graph()` refuses to start without the database, with instructions.
+   - Lookups open it **read-only**, so no file is ever created.
+   - `ToolNode(handle_tool_errors=True)` handles unexpected tool failures; a unit test with a retriever that raises `ConnectionError` checks it.
+5. **My Milestone 3 README rule was only half right.** I'd written that `graph.invoke()` returns only fields a node wrote. The new `messages` field came back as `[]` although no node wrote it, because **fields with a reducer always appear**. Three tests caught it; the tests and the README are corrected.
+
+**What we learned:**
+- **Put business rules in code, not in the LLM:** dates, windows and fees are tested exhaustively in Python.
+- **Don't rely on the prompt for rules that must hold.** "Never invent an order ID" needed a code check.
+- **Tool output is part of the prompt.** The model talks about whatever you give it, so give it only what's relevant.
+- **Test the failure paths on purpose** (missing database, crashing tool, endless tool calls), not only the happy path.
+
+**Known limitations:**
+- **Only the current message counts for the order-ID guard.** Once conversation memory arrives (Milestone 6), an order number from an earlier message should count too.
+- **If the customer writes "ORD-1042" and the agent passes `ORD-1042` as the argument,** the guard doesn't find `ORD-1042` among the digits in the message (`1042`), so it asks for the number again. This is safe but slightly unhelpful.
+- **Loosely related rules still creep into `search_policies` answers** (see problem 3).
+- **Error messages from failing tools go to the model,** which decides how to phrase them. Proper escalation on failure comes in Milestone 5.
+- **Order data is mock data** with dates relative to the seeding day.
+- **15–30 s per order answer** on this machine (memory pressure, see Milestone 3).
+
 ---
 
 ## Roadmap
@@ -702,8 +845,8 @@ Every milestone follows the same cycle:
 | 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent → respond` | ✅ Done |
 | 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ✅ Done |
 | 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ✅ Done |
-| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ⏳ Next |
-| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ⬜ |
+| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ✅ Done |
+| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ⏳ Next |
 | 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ⬜ |
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ⬜ |
 | 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⬜ |
