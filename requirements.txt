@@ -3,3 +3,5 @@ langchain-ollama==1.1.0
 langgraph==1.2.12
 pydantic-settings==2.15.0
 pytest==9.1.1
+langchain-chroma==1.1.0
+langchain-text-splitters==1.1.3

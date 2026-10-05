@@ -26,3 +26,24 @@ class IntentClassification(BaseModel):
         default=None,
         description="The order number if the customer mentions one, digits only (e.g. '1042'), otherwise null.",
     )
+
+
+class RetrievedChunk(BaseModel):
+    """A piece of a policy document returned by the retriever."""
+
+    text: str
+    source: str  # file name, e.g. "returns.md"
+    section: str  # heading within the document, e.g. "Restocking fee"
+    score: float  # relevance from 0 (unrelated) to 1 (identical meaning)
+
+
+class PolicyAnswer(BaseModel):
+    """An answer to a policy question, based only on retrieved policy text.
+
+    `answered` comes first so the model decides whether the excerpts contain the answer before writing one.
+    `sources` deliberately has no default: an optional field is one the model is allowed to skip, and it did.
+    """
+
+    answered: bool = Field(description="true only if the policy excerpts contain the answer to the question.")
+    answer: str = Field(description="The answer for the customer, in 1-3 sentences.")
+    sources: list[str] = Field(description="File names of the excerpts the answer is based on, e.g. 'returns.md'.")

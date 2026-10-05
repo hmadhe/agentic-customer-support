@@ -10,4 +10,5 @@ def get_llm(settings: Settings | None = None) -> ChatOllama:
         model=settings.ollama_model,
         base_url=settings.ollama_base_url,
         temperature=settings.llm_temperature,
+        num_predict=settings.max_output_tokens,
     )
