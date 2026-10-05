@@ -3,9 +3,7 @@
 import pytest
 
 from app.answer import INSUFFICIENT_ANSWER, answer_question
-from app.ingest import ingest
 from app.retriever import retrieve
-from app.vector_store import get_vector_store
 
 pytestmark = pytest.mark.llm
 
@@ -36,11 +34,8 @@ UNANSWERABLE = ["Do you offer price matching?", "Is there a student discount?", 
 
 
 @pytest.fixture(scope="module")
-def store(tmp_path_factory):
-    """A fresh vector store built from the real policy documents, independent of the local chroma_db/."""
-    vector_store = get_vector_store(persist_directory=tmp_path_factory.mktemp("chroma"))
-    ingest(vector_store)
-    return vector_store
+def store(policy_store):
+    return policy_store
 
 
 @pytest.mark.parametrize("question, source, section", RETRIEVAL_CASES)

@@ -4,7 +4,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 2 of 10 complete. The assistant classifies customer messages through a LangGraph workflow, and a separate RAG pipeline answers policy questions from VoltCart's documents, citing its sources. The two are connected in Milestone 3. See the [roadmap](#roadmap).
+> **Status:** Milestone 3 of 10 complete. A LangGraph workflow classifies each customer message and **routes policy questions to RAG**, which answers from VoltCart's documents and cites its sources. Other intents still get placeholder replies until tools and escalation are added. See the [roadmap](#roadmap).
 
 ---
 
@@ -49,7 +49,7 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 | **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search | ✅ In use |
 | **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model, prompts, structured output, text splitters, embeddings, Chroma wrapper) |
 | **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings, LLM output schemas, graph state, retrieved chunks) |
-| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (2-node graph) |
+| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (4 nodes, conditional routing) |
 | **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
 | **pytest** | Automated tests | ✅ In use |
 | **SQLite** | Mock order database and support tickets | ⏳ Milestones 4–5 |
@@ -102,18 +102,21 @@ flowchart TD
     E --> END
 ```
 
-The graph grows in stages. **The current graph (Milestone 1)** is the first, simplest version:
+The graph grows in stages. **The current graph (Milestone 3):**
 
 ```mermaid
 flowchart LR
     START([START]) --> C[classify_intent<br/>LLM → IntentClassification]
-    C --> R[respond<br/>fixed reply per intent]
-    R --> END([END])
+    C -->|policy_question| R[retrieve<br/>top 4 policy chunks]
+    R --> A[answer<br/>PolicyAnswer with sources]
+    A --> END([END])
+    C -->|any other intent| P[respond<br/>placeholder reply]
+    P --> END
 ```
 
-### The RAG pipeline (Milestone 2, standalone)
+### The RAG pipeline
 
-The RAG pipeline is built and tested **on its own**. It is not yet a node in the graph; Milestone 3 connects it.
+Built in Milestone 2 and connected to the graph in Milestone 3 as the `retrieve` and `answer` nodes.
 
 ```mermaid
 flowchart LR
@@ -141,7 +144,7 @@ agentic-customer-support/
 │   ├── llm.py            # get_llm(): the single place where the LLM is created
 │   ├── schemas.py        # Pydantic models: IntentClassification, RetrievedChunk, PolicyAnswer
 │   ├── classifier.py     # Prompt + LLM that turns a message into an IntentClassification
-│   ├── graph.py          # LangGraph workflow: state, nodes and build_graph()
+│   ├── graph.py          # LangGraph workflow: state, nodes, routing and build_graph()
 │   ├── vector_store.py   # Embedding model + Chroma collection, shared by ingestion and retrieval
 │   ├── ingest.py         # Load policy docs → split into chunks → embed → store
 │   ├── retriever.py      # Question → most relevant chunks with source and section
@@ -154,13 +157,15 @@ agentic-customer-support/
 │   ├── ingest.py         # Builds the vector store from data/policies/
 │   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
 ├── tests/
+│   ├── conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store
 │   ├── test_llm.py              # Unit test: the LLM is configured from settings
-│   ├── test_graph.py            # Unit tests: graph wiring and schema validation (fake classifier, no LLM)
+│   ├── test_graph.py            # Unit tests: routing for every intent, with fake classifier/retriever/answerer
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
 │   ├── test_classifier_llm.py   # Real-model tests: classification accuracy (run with -m llm)
-│   └── test_rag_llm.py          # Real-model tests: retrieval and answers on the real documents (-m llm)
+│   ├── test_rag_llm.py          # Real-model tests: retrieval and answers on the real documents (-m llm)
+│   └── test_graph_llm.py        # Real-model tests: whole graph end to end (-m llm)
 ├── .env.example          # Template for your local .env (committed to git)
 ├── .gitignore            # Keeps .env, .venv/ and caches out of git
 ├── pytest.ini            # pytest configuration
@@ -271,9 +276,17 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `20 passed, 36 deselected`. The 36 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `21 passed, 40 deselected`. The 40 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
-### 8. Chat with the assistant
+### 8. Build the policy vector store
+
+```bash
+python -m scripts.ingest
+```
+
+This only needs to run again when a document in `data/policies/` changes, or when the embedding setup changes.
+
+### 9. Chat with the assistant
 
 ```bash
 python -m scripts.chat
@@ -282,25 +295,27 @@ python -m scripts.chat
 ```
 VoltCart support (type 'quit' to exit)
 
+You: How much is express shipping?
+  [intent=policy_question sentiment=neutral order_id=None]
+Bot: $14.99
+  [sources=['shipping.md'] answered=True]
+
 You: Where is my order #1042?
   [intent=order_issue sentiment=neutral order_id=1042]
 Bot: I can help with your order. Let me check its details.
-
-You: How long does shipping take?
-  [intent=policy_question sentiment=neutral order_id=None]
-Bot: Good question about our policies. I'll look that up for you.
 ```
 
-The line in brackets shows how the LLM classified the message. The reply is a fixed placeholder for now; real answers arrive with RAG and tools in later milestones. Each message takes about 4 seconds on a CPU.
+The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. Other intents still get a fixed placeholder reply until tools (Milestone 4) and escalation (Milestone 5) are added. On this 8 GB machine a policy answer takes about 15–20 seconds and other replies 2–6 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
 
-### 9. Build the policy vector store and ask a question
+### 10. Ask the RAG pipeline directly (optional)
+
+`scripts.ask` skips the classifier and shows each retrieved chunk, which is useful for debugging retrieval.
 
 ```bash
-python -m scripts.ingest
 python -m scripts.ask "How much is express shipping?" "Do you offer price matching?"
 ```
 
-Ingestion only needs to run again when a document in `data/policies/` changes. Actual output:
+Actual output:
 
 ```
 Stored 31 chunks. Collection now holds 31 chunks.
@@ -390,12 +405,18 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 
 ### `app/graph.py`: the LangGraph workflow
 
-- **`SupportState`** is a Pydantic model holding the data that flows through the graph: the customer `message`, the `classification` and the `response`. Each node returns **only the fields it changes**, and LangGraph merges them into the state.
-- **`classify_intent`** calls the classifier and stores its result.
-- **`respond`** looks up a fixed reply for the intent. It will be replaced by real RAG, tool and escalation branches in later milestones.
-- **`build_graph(classifier=None)`** connects `START → classify_intent → respond → END` and compiles the graph. You can pass in a different classifier, which is how the tests swap in a fake one so they don't need the LLM.
+- **`SupportState`** is a Pydantic model holding the data that flows through the graph: the customer `message`, its `classification`, the retrieved `chunks`, the `policy_answer` (answer, sources, answered) and the final `response`. Each node returns **only the fields it changes**, and LangGraph merges them into the state.
+- **Nodes:**
+  - `classify_intent` calls the classifier.
+  - `retrieve` calls `retrieve()` from Milestone 2.
+  - `answer` calls `answer_question()` from Milestone 2 and copies its text into `response`.
+  - `respond` returns a placeholder reply for intents that don't have a real branch yet.
+- **Routing:** `route_by_intent` is a plain function that reads the classification and returns the name of the next node, `"retrieve"` for `policy_question` and `"respond"` for everything else. `add_conditional_edges` connects it. Because routing reads an **enum**, it never has to interpret free text.
+- **`build_graph(classifier=None, retriever=None, answerer=None)`** creates the real vector store and answer chain **once**, when the graph is built, not inside the nodes, so each message doesn't open a new Chroma connection. Any of the three can be swapped for a fake, which is how the unit tests run without models.
 
-> **Gotcha:** the state is a Pydantic model, but `graph.invoke(...)` returns a plain **dict**. Use `result["response"]`, not `result.response`.
+> **Gotchas:**
+> - The state is a Pydantic model, but `graph.invoke(...)` returns a plain **dict**. Use `result["response"]`, not `result.response`.
+> - That dict contains **only the fields a node wrote**. Pydantic defaults are left out, so after a placeholder reply `result["chunks"]` raises `KeyError`. Use `result.get("chunks")`.
 
 ### `scripts/chat.py`: command-line chat
 
@@ -458,11 +479,12 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py` | No (fakes) | About 5 seconds | `python -m pytest` | 20 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py` | Yes | About 2.5 minutes | `python -m pytest -m llm` | 34 passed, 2 xfailed |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py` | No (fakes) | About 5–10 seconds | `python -m pytest` | 21 passed |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 3.5 minutes | `python -m pytest -m llm` | 37 passed, 3 xfailed |
 
 **Unit tests** check *our* code, using fakes so they're fast and give the same result every time:
-- **Classifier and graph:** a fake classifier that always returns a fixed answer.
+- **Graph routing:** fake classifier, retriever and answerer. Every non-policy intent must get its placeholder **without** retrieval or answering being called (the fakes raise an error if they are). A policy question must go through retrieve and then answer with the right inputs, and an unanswered policy question must pass the "insufficient information" reply through.
+- **Safety net (`conftest.py`):** for any test not marked `llm`, Ollama's address is changed to a closed port. If a unit test accidentally calls a real model, it fails within seconds with a connection error instead of quietly passing slowly.
 - **Ingestion and retrieval:** a **small controlled dataset** (Markdown files written into a temporary folder) and LangChain's `DeterministicFakeEmbedding`, where identical text always gives an identical vector. They check that each section becomes one chunk with the right `source` and `section`, that long sections keep their heading, that re-ingesting never duplicates chunks, that deleted documents disappear, and that retrieved chunks carry their metadata.
 - **Answering:** a fake answer chain. It checks that unretrieved sources are removed, that an unanswered result gets the fixed reply (using a real qwen output as the example), that no chunks means no LLM call, and that unparseable output doesn't crash.
 
@@ -470,8 +492,10 @@ There are two kinds of tests:
 - **Classifier:** 14 messages with expected intents, order-ID extraction and negative sentiment, including **regression cases** the model once got wrong.
 - **Retrieval:** 11 questions, each checking the **document ranked first** *and* that the **specific section** that answers it is in the top 4. They run against a fresh vector store built in a temporary folder, so they don't depend on your local `chroma_db/`.
 - **Answers:** 3 questions whose answers must contain the right fact (`14.99`, `15%`, `150`) and cite the right document, plus 3 questions **no document answers**, which must get the "insufficient information" reply.
+- **Whole graph:** a policy question answered with its source, an unanswerable policy question getting the "insufficient information" reply, and an order question skipping RAG.
+- **Shared test vector store:** the `policy_store` fixture in `conftest.py` builds one vector store from the policies **per test session**, in a temporary folder.
 
-**What `xfail` means:** two tests are marked *expected to fail*, because they describe known limitations we chose not to hide (see the [Milestone 2 log](#milestone-2-standalone-rag-pipeline-)). pytest runs them and reports `XFAIL`. If one starts passing, for example after a model upgrade, pytest reports `XPASS`.
+**What `xfail` means:** three tests are marked *expected to fail*, because they describe known limitations we chose not to hide (see the Milestone [2](#milestone-2-standalone-rag-pipeline-) and [3](#milestone-3-routing-policy-questions-to-rag-) logs). pytest runs them and reports `XFAIL`. If one starts passing, for example after a model upgrade, pytest reports `XPASS`.
 
 **Passing tests don't prove the RAG is accurate.** They cover 11 retrieval questions and 6 answer questions, all written by hand. Accuracy on a larger set of questions is measured in Milestone 9.
 
@@ -497,6 +521,9 @@ Each problem below was hit or reproduced during development.
 | The same chunk appears twice in the retrieved results | Ingestion ran more than once with an older version that only added chunks | Fixed: ingestion now empties the collection first. Re-run `python -m scripts.ingest` |
 | Retrieval suddenly gets worse with no error | The embedding setup changed (model or prefixes) but the stored vectors are still the old ones | Re-run `python -m scripts.ingest` after any embedding change |
 | `scripts.ask` returns nothing useful, or the collection holds 0 chunks | Ingestion failed partway through (for example, Ollama stopped) after the collection was emptied | Start Ollama and re-run `python -m scripts.ingest` |
+| `KeyError: 'chunks'` (or `'policy_answer'`) on a graph result | `graph.invoke()` only returns fields a node wrote. Placeholder replies never write `chunks` | Use `result.get("chunks")` |
+| A unit test fails with `ConnectionError` | The test is calling a real model. The `conftest.py` safety net blocks that outside `llm` tests | Pass fakes into `build_graph(...)`, or mark the test `@pytest.mark.llm` |
+| Speed varies wildly (the same step takes 0.3 s once and 13 s the next time) | The machine is short of RAM and is paging memory to disk. On an 8 GB machine the two models plus VS Code and a browser don't fit | Close Chrome and other heavy apps while running the assistant |
 | A question takes about a minute and gets the "insufficient information" reply | qwen fell into a **runaway generation** and was cut off at `MAX_OUTPUT_TOKENS`, so its output couldn't be parsed | Expected occasionally with this small model. Before the cap, one runaway took 8 minutes |
 
 ---
@@ -621,6 +648,50 @@ Every milestone follows the same cycle:
 - **The test sample is small** (11 retrieval and 6 answer questions, written by hand), and answer tests check for one key fact, not the full text.
 - **Not connected to the graph yet.** That's Milestone 3.
 
+### Milestone 3: routing policy questions to RAG ✅
+
+**Goal:** connect the Milestone 2 RAG pipeline to the LangGraph workflow with conditional routing, without changing the RAG code.
+
+**Built:**
+- `retrieve` and `answer` nodes that call the existing `retrieve()` and `answer_question()`
+- `route_by_intent` plus `add_conditional_edges`: `policy_question` goes to RAG, every other intent to the placeholder reply
+- State fields for the retrieved chunks and the answer with its sources; the chat shows the sources
+- `build_graph()` accepts a fake retriever and answerer as well as a fake classifier, and creates the real ones once
+- 6 unit tests for routing, a `conftest.py` safety net, and 4 real end-to-end tests (one of them `xfail`)
+
+**Real run, 9 messages through the whole graph:**
+
+| Message | Intent | Route | Reply |
+|---|---|---|---|
+| How much is express shipping? | policy_question | RAG | "$14.99" (`shipping.md`) |
+| Do gift cards expire? | policy_question | RAG | "VoltCart gift cards never expire." (`payments.md`) |
+| Do you offer price matching? | policy_question | RAG | "insufficient information" reply |
+| How long do I have to return an opened laptop? | policy_question | RAG | "Opened laptops can be returned within 15 days of delivery." (`returns.md`) |
+| Where is my order #1042? | order_issue | placeholder | ✅ correct for now |
+| Hi there! | greeting | placeholder | ✅ |
+| What's the capital of France? | out_of_scope | placeholder | ✅ |
+| Can I return the laptop I bought last week? | order_issue | placeholder | ⚠️ the answer is in the policies, but RAG is skipped |
+| My headphones arrived broken, what can I do? | order_issue | placeholder | ⚠️ the same gap |
+
+**Problems hit and how they were fixed:**
+1. **A design gap: own-purchase questions skip RAG.** The last two rows are classified **correctly** under Milestone 1's rules (they're about the customer's own purchase), but the answer they need, the return window or the damaged-item procedure, is in the policies. The intents mix up "about my order" with "needs order data". **Not patched in the classifier**, because the classification is right. **Planned fix (Milestone 4):** give the order-handling agent a `search_policies` tool, so it can combine order data with policy. It's recorded as an `xfail` test until then.
+2. **"Fast" unit tests silently called real models.** After the change, the unit suite took **58 seconds** instead of 5. The old graph tests passed only a fake *classifier*, so `build_graph()` created the **real** retriever and answer chain, and the `policy_question` case called Ollama for real. **Fix:** every unit test now passes fakes for all three dependencies, and a `conftest.py` safety net points Ollama at a closed port for non-`llm` tests. I proved the safety net with a throwaway test that builds the graph without fakes: it failed in 5.7 s with `ConnectionError`. The suite now takes 3.5–10 s.
+3. **`KeyError: 'chunks'` in my new test.** `graph.invoke()` only returns fields a node actually wrote; Pydantic defaults don't appear. The graph was fine; the test's assumption was wrong. **Fix:** the tests assert that the key is absent, and the chat uses `result.get(...)`.
+4. **Erratic, slow responses: an environment problem, not a code problem.** The first policy answer took 69.7 s, later ones about 18 s. Timing each step showed the same work at wildly different speeds (embedding one question took 13.3 s once and 3.5 s the next; it should take well under a second). Both models stayed loaded, so this wasn't model swapping. The machine showed **0.38 GB of 7.9 GB RAM free, 4.3 GB in the page file, and 6,000–15,000 hard page faults per second while the CPU was 90% idle**: it was paging memory to disk. **No code fix:** closing heavy apps helps.
+5. **Stale Chroma folders (recorded, not fixed).** `chroma_db/` held 6 index folders, of which Chroma uses only 1. Each re-ingestion leaves the old one behind (about 314 KB each). It's harmless and I chose not to delete Chroma's internal files from our code.
+
+**What we learned:**
+- **Correct classification doesn't guarantee a useful route.** The intents decide *where* a message goes, and one intent can need two kinds of help.
+- **A partial fake is a real dependency.** Fake *every* external dependency in unit tests, and add a guard so a mistake fails loudly.
+- **Measure before blaming the code.** The slowness was memory paging, which timing each step and checking the OS showed.
+
+**Known limitations:**
+- **Own-purchase questions that need policy answers get a placeholder** (planned for Milestone 4).
+- **Order, human-request, greeting and out-of-scope replies are still placeholders.**
+- **About 15–20 s per policy answer** on this machine, because of memory pressure.
+- **Each message is still handled on its own:** no conversation memory until Milestone 6.
+- The Milestone 2 limitations still apply (the warranty hallucination, occasional runaways and terse answers).
+
 ---
 
 ## Roadmap
@@ -630,8 +701,8 @@ Every milestone follows the same cycle:
 | 0 | Setup | Project skeleton, settings, first LLM call, pytest | ✅ Done |
 | 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent → respond` | ✅ Done |
 | 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ✅ Done |
-| 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ⏳ Next |
-| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, agent ⇄ tools loop | ⬜ |
+| 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ✅ Done |
+| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ⏳ Next |
 | 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ⬜ |
 | 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ⬜ |
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ⬜ |

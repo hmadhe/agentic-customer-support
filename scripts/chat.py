@@ -1,4 +1,4 @@
-"""Milestone 1 CLI: classify customer messages and reply. Type 'quit' to exit."""
+"""Command-line chat with the support graph. Type 'quit' to exit."""
 
 from app.graph import build_graph
 
@@ -21,6 +21,8 @@ def main() -> None:
         c = result["classification"]
         print(f"  [intent={c.intent} sentiment={c.sentiment} order_id={c.order_id}]")
         print(f"Bot: {result['response']}")
+        if result.get("policy_answer"):
+            print(f"  [sources={result['policy_answer'].sources} answered={result['policy_answer'].answered}]")
 
 
 if __name__ == "__main__":
