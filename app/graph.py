@@ -5,6 +5,7 @@ from typing import Annotated
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -16,12 +17,14 @@ from app.agent import (
     ASK_FOR_ORDER_ID,
     MAX_TOOL_ROUNDS,
     build_agent,
+    customer_text,
     invented_order_ids,
     latest_tools_failed,
     tool_rounds,
 )
 from app.answer import AnswerGenerationError, answer_question, build_answer_chain
 from app.classifier import build_classifier
+from app.memory import TICKET_HISTORY_MESSAGES, format_history, recent_messages
 from app.retriever import retrieve
 from app.schemas import Intent, IntentClassification, PolicyAnswer, RetrievedChunk, Sentiment
 from app.tickets import (
@@ -40,18 +43,29 @@ Answerer = Callable[[str, list[RetrievedChunk]], PolicyAnswer]
 
 
 class SupportState(BaseModel):
-    """Data passed between graph nodes. Each node returns only the fields it changes."""
+    """Data passed between graph nodes. Each node returns only the fields it changes.
 
+    Two lifetimes: `messages` is the whole conversation and is kept between turns (with a checkpointer).
+    Every other field belongs to the current turn and is reset when a new message arrives.
+    """
+
+    # The conversation: customer messages, the agent's tool calls and results, and every reply.
+    # add_messages appends instead of replacing.
+    messages: Annotated[list[AnyMessage], add_messages] = Field(default_factory=list)
+
+    # --- Current turn only ---
     message: str
     classification: IntentClassification | None = None
     chunks: list[RetrievedChunk] = Field(default_factory=list)
     policy_answer: PolicyAnswer | None = None
-    # The order agent's conversation with its tools. add_messages appends instead of replacing.
-    messages: Annotated[list[AnyMessage], add_messages] = Field(default_factory=list)
     # Set by the node that decides a human is needed; read by the escalate node.
     escalation_reason: EscalationReason | None = None
     ticket: Ticket | None = None
     response: str | None = None
+
+
+# Returned by the first node of every turn, so nothing from the previous turn leaks into this one.
+NEW_TURN = {"chunks": [], "policy_answer": None, "escalation_reason": None, "ticket": None, "response": None}
 
 
 # Replies for intents that need neither RAG, tools nor a human.
@@ -98,6 +112,7 @@ def build_graph(
     agent: Runnable | None = None,
     db_path: Path = orders.DB_PATH,
     tickets_db_path: Path = TICKETS_DB_PATH,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     """Build the support workflow.
 
@@ -120,7 +135,9 @@ def build_graph(
     agent = agent or build_agent(tools)
 
     def classify_intent(state: SupportState) -> dict:
-        return {"classification": classifier.invoke({"message": state.message})}
+        # state.messages holds the earlier turns; this turn's message is added below.
+        classification = classifier.invoke({"message": state.message, "history": format_history(state.messages)})
+        return {**NEW_TURN, "messages": [HumanMessage(state.message)], "classification": classification}
 
     def retrieve_policies(state: SupportState) -> dict:
         return {"chunks": retriever(state.message)}
@@ -132,25 +149,28 @@ def build_graph(
             return {"escalation_reason": EscalationReason.MODEL_ERROR}
         if not policy_answer.answered:
             return {"policy_answer": policy_answer, "escalation_reason": EscalationReason.POLICY_NOT_FOUND}
-        return {"policy_answer": policy_answer, "response": policy_answer.answer}
+        return {
+            "policy_answer": policy_answer,
+            "response": policy_answer.answer,
+            "messages": [AIMessage(policy_answer.answer)],
+        }
 
     def run_agent(state: SupportState) -> dict:
         if latest_tools_failed(state.messages):
             return {"escalation_reason": EscalationReason.TOOL_ERROR}
 
-        # On the first turn, start the agent's conversation with its instructions and the customer's message.
-        new_messages = [] if state.messages else [SystemMessage(AGENT_PROMPT), HumanMessage(state.message)]
-        reply = agent.invoke(state.messages + new_messages)
+        # The instructions are added for each call rather than stored; the history is trimmed to fit the context.
+        reply = agent.invoke([SystemMessage(AGENT_PROMPT), *recent_messages(state.messages)])
 
-        if invented_order_ids(reply.tool_calls, state.message):
+        if invented_order_ids(reply.tool_calls, customer_text(state.messages)):
             # Don't run a lookup for an order number the customer never gave; ask for it instead.
             reply = AIMessage(ASK_FOR_ORDER_ID)
         elif reply.tool_calls and tool_rounds(state.messages) >= MAX_TOOL_ROUNDS:
             # Out of tool rounds. The unanswered tool-call request is not stored: a history with a tool call
-            # but no tool result would break the next turn once conversations are remembered.
-            return {"messages": new_messages, "escalation_reason": EscalationReason.AGENT_GAVE_UP}
+            # but no tool result breaks the next turn of the conversation.
+            return {"escalation_reason": EscalationReason.AGENT_GAVE_UP}
 
-        update = {"messages": new_messages + [reply]}
+        update = {"messages": [reply]}
         if not reply.tool_calls:
             update["response"] = reply.content
         return update
@@ -165,14 +185,19 @@ def build_graph(
         else:
             reason = EscalationReason.ANGRY_CUSTOMER
         try:
-            ticket = create_ticket(reason, state.message, c.intent, c.sentiment, c.order_id, tickets_db_path)
+            ticket = create_ticket(
+                reason, state.message, c.intent, c.sentiment, c.order_id,
+                conversation=format_history(state.messages, max_messages=TICKET_HISTORY_MESSAGES),
+                db_path=tickets_db_path,
+            )
         except sqlite3.Error:
-            return {"escalation_reason": reason, "response": TICKET_FAILED_REPLY}
+            return {"escalation_reason": reason, "response": TICKET_FAILED_REPLY, "messages": [AIMessage(TICKET_FAILED_REPLY)]}
         reply = ESCALATION_REPLIES[reason].format(ticket_id=ticket.ticket_id)
-        return {"escalation_reason": reason, "ticket": ticket, "response": reply}
+        return {"escalation_reason": reason, "ticket": ticket, "response": reply, "messages": [AIMessage(reply)]}
 
     def respond(state: SupportState) -> dict:
-        return {"response": RESPONSES[state.classification.intent]}
+        reply = RESPONSES[state.classification.intent]
+        return {"response": reply, "messages": [AIMessage(reply)]}
 
     graph = StateGraph(SupportState)
     graph.add_node("classify_intent", classify_intent)
@@ -193,4 +218,5 @@ def build_graph(
     graph.add_edge("tools", "agent")
     graph.add_edge("escalate", END)
     graph.add_edge("respond", END)
-    return graph.compile()
+    # With a checkpointer, each thread_id's state is saved after every turn and loaded on the next one.
+    return graph.compile(checkpointer=checkpointer)

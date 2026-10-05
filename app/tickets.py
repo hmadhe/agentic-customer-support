@@ -43,6 +43,7 @@ class Ticket(BaseModel):
     intent: str | None
     sentiment: str | None
     order_id: str | None
+    conversation: str | None = None  # recent messages, so the support team sees what was already said
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -51,8 +52,13 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     connection.execute(
         """CREATE TABLE IF NOT EXISTS tickets (
             ticket_id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, reason TEXT,
-            customer_message TEXT, intent TEXT, sentiment TEXT, order_id TEXT)"""
+            customer_message TEXT, intent TEXT, sentiment TEXT, order_id TEXT, conversation TEXT)"""
     )
+    # Migration: databases created before Milestone 6 have no conversation column, and CREATE TABLE IF NOT EXISTS
+    # doesn't change an existing table. Without this, every new ticket failed to save on those databases.
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(tickets)")}
+    if "conversation" not in columns:
+        connection.execute("ALTER TABLE tickets ADD COLUMN conversation TEXT")
     return connection
 
 
@@ -62,17 +68,19 @@ def create_ticket(
     intent: str | None = None,
     sentiment: str | None = None,
     order_id: str | None = None,
+    conversation: str | None = None,
     db_path: Path = TICKETS_DB_PATH,
 ) -> Ticket:
     created_at = datetime.now().replace(microsecond=0)
     with _connect(db_path) as connection:
         cursor = connection.execute(
-            "INSERT INTO tickets (created_at, reason, customer_message, intent, sentiment, order_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (created_at.isoformat(), reason, customer_message, intent, sentiment, order_id),
+            "INSERT INTO tickets (created_at, reason, customer_message, intent, sentiment, order_id, conversation) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (created_at.isoformat(), reason, customer_message, intent, sentiment, order_id, conversation),
         )
     return Ticket(
         ticket_id=cursor.lastrowid, created_at=created_at, reason=reason, customer_message=customer_message,
-        intent=intent, sentiment=sentiment, order_id=order_id,
+        intent=intent, sentiment=sentiment, order_id=order_id, conversation=conversation,
     )
 
 

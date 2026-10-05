@@ -1,7 +1,7 @@
 import re
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 
@@ -23,7 +23,7 @@ ASK_FOR_ORDER_ID = "Could you please give me your order number? You can find it 
 
 
 def invented_order_ids(tool_calls: list[dict], customer_message: str) -> list[str]:
-    """Order numbers the agent wants to look up that the customer never wrote.
+    """Order numbers the agent wants to look up that the customer never wrote (pass all their messages).
 
     Prompting alone did not stop qwen2.5:3b from inventing one ("123456"), so this is enforced in code.
     """
@@ -32,9 +32,22 @@ def invented_order_ids(tool_calls: list[dict], customer_message: str) -> list[st
     return [order_id for order_id in requested if order_id not in customer_numbers]
 
 
+def current_turn(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """The messages since the customer's latest message (inclusive)."""
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], HumanMessage):
+            return messages[index:]
+    return messages
+
+
+def customer_text(messages: list[AnyMessage]) -> str:
+    """Everything the customer has written in this conversation."""
+    return "\n".join(message.content for message in messages if isinstance(message, HumanMessage))
+
+
 def tool_rounds(messages: list[AnyMessage]) -> int:
-    """How many times the agent has asked for tools so far."""
-    return sum(1 for message in messages if isinstance(message, AIMessage) and message.tool_calls)
+    """How many times the agent has asked for tools in the current turn."""
+    return sum(1 for message in current_turn(messages) if isinstance(message, AIMessage) and message.tool_calls)
 
 
 def latest_tools_failed(messages: list[AnyMessage]) -> bool:

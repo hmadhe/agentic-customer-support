@@ -10,6 +10,8 @@ def main() -> None:
     for t in tickets:
         order = f" order={t.order_id}" if t.order_id else ""
         print(f"#{t.ticket_id} {t.created_at} [{t.reason}] intent={t.intent} sentiment={t.sentiment}{order}\n    {t.customer_message!r}")
+        if t.conversation:
+            print("    conversation:\n" + "\n".join(f"      {line}" for line in t.conversation.splitlines()))
 
 
 if __name__ == "__main__":

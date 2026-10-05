@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Intent(StrEnum):
@@ -27,6 +27,16 @@ class IntentClassification(BaseModel):
         default=None,
         description="The order number if the customer mentions one, digits only (e.g. '1042'), otherwise null.",
     )
+
+    @field_validator("order_id", mode="before")
+    @classmethod
+    def keep_only_real_order_numbers(cls, value):
+        # The model has returned placeholders like "[order number]" and "XX". Turn anything that isn't
+        # an order number into None instead of raising, which would make the whole classification fail.
+        if value is None:
+            return None
+        value = str(value).strip().lstrip("#")
+        return value if value.isdigit() else None
 
 
 class RetrievedChunk(BaseModel):

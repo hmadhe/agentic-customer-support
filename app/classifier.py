@@ -1,6 +1,6 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableLambda
 
 from app.llm import get_llm
 from app.schemas import IntentClassification
@@ -26,9 +26,26 @@ Sentiment:
 
 order_id: the order number if one is mentioned (digits only), otherwise null."""
 
+# Used only for follow-up messages. The first message of a conversation keeps the original prompt: wrapping every
+# message in this template made qwen2.5:3b fail 5 of 18 Milestone 1 tests (see the Milestone 6 log).
+FOLLOW_UP_TEMPLATE = """Earlier conversation (for context only):
+{history}
+
+Classify ONLY this latest customer message. Use the earlier conversation just to understand what it refers to,
+for example "it" or "and how long does it take?". If it refers to an order from earlier in the conversation,
+use that order number as order_id.
+
+Latest customer message:
+{message}"""
+
 
 def build_classifier(llm: BaseChatModel | None = None) -> Runnable:
-    """Prompt + LLM that returns a validated IntentClassification. Input: {"message": str}."""
-    llm = llm or get_llm()
-    prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", "{message}")])
-    return prompt | llm.with_structured_output(IntentClassification)
+    """Prompt + LLM that returns a validated IntentClassification.
+
+    Input: {"message": str} or {"message": str, "history": str}. With an empty or missing history,
+    the message is classified exactly as before conversation memory was added.
+    """
+    model = (llm or get_llm()).with_structured_output(IntentClassification)
+    single = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", "{message}")]) | model
+    follow_up = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", FOLLOW_UP_TEMPLATE)]) | model
+    return RunnableLambda(lambda inputs: (follow_up if inputs.get("history") else single).invoke(inputs))

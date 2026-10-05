@@ -3,7 +3,9 @@
 import pytest
 from langchain_core.messages import ToolMessage
 
+from app.agent import current_turn
 from app.graph import build_graph
+from app.memory import make_checkpointer
 from app.retriever import retrieve
 from app.schemas import Intent
 from app.tickets import EscalationReason
@@ -21,8 +23,52 @@ def graph(policy_store, order_db, tmp_path_factory):
     )
 
 
+@pytest.fixture(scope="module")
+def chat_graph(policy_store, order_db, tmp_path_factory):
+    # Same as `graph`, but it remembers conversations by thread_id.
+    return build_graph(
+        retriever=lambda question: retrieve(question, vector_store=policy_store),
+        db_path=order_db,
+        tickets_db_path=tmp_path_factory.mktemp("tickets") / "tickets.db",
+        checkpointer=make_checkpointer(),
+    )
+
+
 def tools_called(result) -> list[str]:
-    return [call["name"] for message in result["messages"] for call in getattr(message, "tool_calls", [])]
+    # Only this turn's tool calls: with memory, messages holds the whole conversation.
+    return [call["name"] for message in current_turn(result["messages"]) for call in getattr(message, "tool_calls", [])]
+
+
+def chat(graph, thread_id: str, *messages: str):
+    config = {"configurable": {"thread_id": thread_id}}
+    return [graph.invoke({"message": message}, config) for message in messages]
+
+
+def test_follow_up_uses_the_order_from_the_previous_turn(chat_graph):
+    _, second = chat(chat_graph, "order-follow-up", "Where is my order 1001?", "Can I return it?")
+
+    calls = [call for m in current_turn(second["messages"]) for call in getattr(m, "tool_calls", [])]
+    assert [(c["name"], c["args"]["order_id"]) for c in calls] == [("check_return_eligibility", "1001")]
+    assert "15%" in second["response"]
+
+
+def test_escalation_in_one_turn_does_not_affect_the_next(chat_graph):
+    first, second = chat(chat_graph, "after-escalation", "I want to talk to a real person.", "How much is express shipping?")
+
+    assert first["escalation_reason"] == EscalationReason.CUSTOMER_REQUEST
+    assert second["escalation_reason"] is None
+    assert "14.99" in second["response"]
+
+
+@pytest.mark.xfail(
+    reason="Known limitation: with qwen2.5:3b, 'And how long does it take?' after a shipping question is classified "
+    "order_issue even with the conversation as context, so the agent asks for an order number.",
+    strict=False,
+)
+def test_policy_follow_up_with_only_a_pronoun(chat_graph):
+    _, second = chat(chat_graph, "policy-follow-up", "How much is express shipping?", "And how long does it take?")
+
+    assert second["classification"].intent == Intent.POLICY_QUESTION
 
 
 def test_policy_question_is_answered_from_the_policies(graph):

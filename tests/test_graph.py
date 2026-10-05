@@ -55,10 +55,9 @@ def test_greeting_and_out_of_scope_get_a_fixed_reply(make_graph, tickets_db, int
     result = make_graph(fake_classifier(intent)).invoke({"message": "anything"})
 
     assert result["response"] == RESPONSES[intent]
-    # Plain fields appear in the result only once a node writes them. Fields with a reducer
-    # (messages uses add_messages) always appear, starting empty.
-    assert "chunks" not in result
-    assert result["messages"] == []
+    # Every turn resets the per-turn fields, so they are always present in the result.
+    assert result["chunks"] == []
+    assert [type(m).__name__ for m in result["messages"]] == ["HumanMessage", "AIMessage"]
     assert list_tickets(tickets_db) == []
 
 
@@ -189,7 +188,7 @@ def test_no_ticket_promise_when_the_ticket_cannot_be_saved(make_graph, tmp_path)
     result = make_graph(fake_classifier(Intent.HUMAN_REQUEST), tickets_db_path=tmp_path).invoke({"message": "Human please"})
 
     assert result["response"] == TICKET_FAILED_REPLY
-    assert "ticket" not in result
+    assert result["ticket"] is None
 
 
 # --- Setup and contracts ---
@@ -209,9 +208,18 @@ def test_classifier_receives_the_customer_message(make_graph):
 
     make_graph(RunnableLambda(classify)).invoke({"message": "Hi"})
 
-    assert received == [{"message": "Hi"}]
+    assert received == [{"message": "Hi", "history": ""}]
 
 
 def test_classification_rejects_unknown_intent():
     with pytest.raises(ValidationError):
         IntentClassification(intent="refund_request", sentiment="neutral")
+
+
+@pytest.mark.parametrize(
+    "raw, cleaned",
+    [("1042", "1042"), ("#1042", "1042"), (" 1042 ", "1042"), ("[order number]", None), ("XX", None), ("", None), (None, None)],
+)
+def test_classification_keeps_only_real_order_numbers(raw, cleaned):
+    # "[order number]" and "XX" are real outputs from qwen2.5:3b.
+    assert IntentClassification(intent="order_issue", sentiment="neutral", order_id=raw).order_id == cleaned
