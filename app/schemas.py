@@ -14,7 +14,8 @@ class Intent(StrEnum):
 class Sentiment(StrEnum):
     POSITIVE = "positive"
     NEUTRAL = "neutral"
-    NEGATIVE = "negative"
+    NEGATIVE = "negative"  # unhappy, disappointed or frustrated: the bot should still help
+    ANGRY = "angry"  # hostile or furious: escalated to a human (Milestone 5)
 
 
 class IntentClassification(BaseModel):

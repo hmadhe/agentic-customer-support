@@ -1,7 +1,8 @@
+import pytest
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import RunnableLambda
 
-from app.answer import INSUFFICIENT_ANSWER, answer_question, format_context
+from app.answer import INSUFFICIENT_ANSWER, AnswerGenerationError, answer_question, format_context
 from app.schemas import PolicyAnswer, RetrievedChunk
 
 CHUNKS = [
@@ -51,10 +52,10 @@ def test_sources_that_were_not_retrieved_are_removed():
     assert result.answer == "30 days."
 
 
-def test_unparseable_model_output_is_treated_as_unanswered():
+def test_unparseable_model_output_raises_instead_of_looking_unanswered():
+    # Milestone 5 split this from "insufficient information": a model failure must not look like a missing policy.
     def runaway(_):
         raise OutputParserException("Failed to parse PolicyAnswer from completion")
 
-    result = answer_question("How long can I return?", CHUNKS, chain=RunnableLambda(runaway))
-
-    assert result == PolicyAnswer(answered=False, answer=INSUFFICIENT_ANSWER, sources=[])
+    with pytest.raises(AnswerGenerationError):
+        answer_question("How long can I return?", CHUNKS, chain=RunnableLambda(runaway))

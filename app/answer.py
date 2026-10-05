@@ -23,6 +23,14 @@ INSUFFICIENT_ANSWER = (
 )
 
 
+class AnswerGenerationError(Exception):
+    """The LLM's output could not be turned into a PolicyAnswer, e.g. a runaway answer cut off at max_output_tokens.
+
+    Raised instead of returning "insufficient information", because the two need different follow-ups:
+    one means the policies don't cover the question, the other means the model failed.
+    """
+
+
 def format_context(chunks: list[RetrievedChunk]) -> str:
     """Render chunks for the prompt, each labelled with its source file."""
     return "\n\n".join(f"[source: {chunk.source}]\n{chunk.text}" for chunk in chunks)
@@ -43,10 +51,8 @@ def answer_question(question: str, chunks: list[RetrievedChunk], chain: Runnable
     chain = chain or build_answer_chain()
     try:
         result = chain.invoke({"question": question, "context": format_context(chunks)})
-    except OutputParserException:
-        # The output was not a valid PolicyAnswer, e.g. a runaway answer cut off at max_output_tokens.
-        # Showing nothing is safer than showing a broken or half-written answer.
-        return PolicyAnswer(answered=False, answer=INSUFFICIENT_ANSWER, sources=[])
+    except OutputParserException as error:
+        raise AnswerGenerationError("The model's answer could not be parsed.") from error
 
     if not result.answered:
         return PolicyAnswer(answered=False, answer=INSUFFICIENT_ANSWER, sources=[])

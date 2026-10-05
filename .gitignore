@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 chroma_db/
 data/voltcart.db
+data/tickets.db

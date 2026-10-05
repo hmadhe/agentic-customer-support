@@ -18,7 +18,11 @@ Rules:
 - If the message contains a question or a request, it is never a greeting.
 - A question about shipping, returns or refunds in general is policy_question. It is order_issue only if the customer refers to their own order.
 
-Sentiment: negative if the customer is upset, angry or frustrated; positive if happy or thankful; otherwise neutral.
+Sentiment:
+- angry: the customer is hostile or furious (insults, swearing, shouting, demands like "NOW", or complaining that they keep being ignored).
+- negative: the customer is unhappy, disappointed or frustrated, but not angry.
+- positive: the customer is happy or thankful.
+- neutral: otherwise.
 
 order_id: the order number if one is mentioned (digits only), otherwise null."""
 

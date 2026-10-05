@@ -1,6 +1,7 @@
 import re
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 
@@ -16,9 +17,8 @@ Rules:
 - If you need an order number and the customer did not give one, ask for it. Never make one up.
 - When you have what you need, answer the customer in 1-3 short sentences."""
 
-# The agent may request tools at most this many times per message, so it can never loop forever.
+# The agent may request tools at most this many times per message; after that the request is escalated.
 MAX_TOOL_ROUNDS = 3
-FALLBACK_REPLY = "I'm sorry, I couldn't complete that request. A member of our support team will help you."
 ASK_FOR_ORDER_ID = "Could you please give me your order number? You can find it in your order confirmation email."
 
 
@@ -30,6 +30,21 @@ def invented_order_ids(tool_calls: list[dict], customer_message: str) -> list[st
     customer_numbers = set(re.findall(r"\d+", customer_message))
     requested = [str(call["args"].get("order_id", "")).strip().lstrip("#") for call in tool_calls if "order_id" in call["args"]]
     return [order_id for order_id in requested if order_id not in customer_numbers]
+
+
+def tool_rounds(messages: list[AnyMessage]) -> int:
+    """How many times the agent has asked for tools so far."""
+    return sum(1 for message in messages if isinstance(message, AIMessage) and message.tool_calls)
+
+
+def latest_tools_failed(messages: list[AnyMessage]) -> bool:
+    """True if any tool in the most recent round raised an error (ToolNode marks those with status 'error')."""
+    latest = []
+    for message in reversed(messages):
+        if not isinstance(message, ToolMessage):
+            break
+        latest.append(message)
+    return any(message.status == "error" for message in latest)
 
 
 def build_agent(tools: list[BaseTool], llm: BaseChatModel | None = None) -> Runnable:

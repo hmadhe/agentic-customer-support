@@ -4,7 +4,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 4 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite, checks return eligibility and searches the policies. Human requests, greetings and off-topic messages still get placeholder replies until escalation is added. See the [roadmap](#roadmap).
+> **Status:** Milestone 5 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates**: it creates a support ticket and tells the customer the ticket number. See the [roadmap](#roadmap).
 
 ---
 
@@ -52,7 +52,7 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 | **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (conditional routing, agent ⇄ tools loop with `ToolNode`) |
 | **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
 | **pytest** | Automated tests | ✅ In use |
-| **SQLite** | Mock order database (support tickets come in Milestone 5) | ✅ In use (orders) |
+| **SQLite** | Mock order database and support tickets | ✅ In use |
 | **FastAPI** | HTTP API that exposes the assistant | ⏳ Milestone 7 |
 
 ---
@@ -102,22 +102,24 @@ flowchart TD
     E --> END
 ```
 
-The graph grows in stages. **The current graph (Milestone 4):**
+The graph grows in stages. **The current graph (Milestone 5):**
 
 ```mermaid
 flowchart LR
     START([START]) --> C[classify_intent<br/>LLM → IntentClassification]
+    C -->|human_request<br/>or angry| E[escalate<br/>create ticket]
     C -->|policy_question| R[retrieve<br/>top 4 policy chunks]
     R --> A[answer<br/>PolicyAnswer with sources]
-    A --> END([END])
+    A -->|answered| END([END])
+    A -->|not in policies /<br/>model error| E
     C -->|order_issue| G[agent<br/>LLM with tools]
     G -->|tool calls| T[tools<br/>get_order_status<br/>check_return_eligibility<br/>search_policies]
     T --> G
     G -->|answer| END
-    G -->|more than 3 tool rounds| F[fallback]
-    F --> END
-    C -->|other intents| P[respond<br/>placeholder reply]
+    G -->|tool error /<br/>over 3 tool rounds| E
+    C -->|greeting,<br/>out_of_scope| P[respond<br/>fixed reply]
     P --> END
+    E --> END
 ```
 
 ### The RAG pipeline
@@ -154,10 +156,11 @@ agentic-customer-support/
 │   ├── vector_store.py   # Embedding model + Chroma collection, shared by ingestion and retrieval
 │   ├── ingest.py         # Load policy docs → split into chunks → embed → store
 │   ├── retriever.py      # Question → most relevant chunks with source and section
-│   ├── answer.py         # Question + chunks → answer with sources, or "insufficient information"
+│   ├── answer.py         # Question + chunks → answer with sources, "insufficient information", or AnswerGenerationError
 │   ├── orders.py         # SQLite order database + return-eligibility rules (pure Python)
 │   ├── tools.py          # LangChain tools the agent can call, with Pydantic-validated inputs
-│   └── agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
+│   ├── agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
+│   └── tickets.py        # Support tickets (SQLite), escalation reasons and the replies for each
 ├── data/
 │   └── policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
 ├── scripts/
@@ -165,6 +168,7 @@ agentic-customer-support/
 │   ├── chat.py           # Command-line chat: type a message, see intent and reply
 │   ├── ingest.py         # Builds the vector store from data/policies/
 │   ├── seed_orders.py    # Creates the mock order database data/voltcart.db
+│   ├── tickets.py        # Lists the support tickets created by escalations
 │   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
 ├── tests/
 │   ├── conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store and order DB
@@ -172,6 +176,7 @@ agentic-customer-support/
 │   ├── test_graph.py            # Unit tests: every route, the agent loop and its safeguards (scripted fake agent)
 │   ├── test_orders.py           # Unit tests: order database and return-eligibility rules
 │   ├── test_tools.py            # Unit tests: tool inputs and outputs, invented-order-ID detection
+│   ├── test_tickets.py          # Unit tests: creating and listing tickets
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
@@ -193,6 +198,7 @@ These files are created locally and **never committed**:
 | `.env` | Your local settings, copied from `.env.example`. Hosted LLM API keys would go here too, so it is never committed |
 | `chroma_db/` | The vector store built by `python -m scripts.ingest`. It is rebuilt from `data/policies/`, so it doesn't need to be in git |
 | `data/voltcart.db` | The mock order database created by `python -m scripts.seed_orders`. Its dates are relative to the day it was seeded |
+| `data/tickets.db` | Support tickets created by escalations. Created automatically on the first escalation and kept when the orders are re-seeded |
 
 ---
 
@@ -289,7 +295,7 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `53 passed, 43 deselected`. The 43 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `60 passed, 47 deselected`. The 47 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
 ### 8. Build the policy vector store and the order database
 
@@ -316,12 +322,30 @@ Bot: $14.99
   [sources=['shipping.md'] answered=True]
 
 You: Can I return the laptop from order 1001?
-  [intent=order_issue sentiment=neutral order_id=1001]
+  [intent=order_issue sentiment=negative order_id=1001]
 Bot: You can return the laptop from order 1001 until October 10, 2026. A 15% restocking fee applies.
   [tool: check_return_eligibility({'order_id': '1001'})]
+
+You: I'm so angry, I want a refund NOW for order 1002
+  [intent=order_issue sentiment=angry order_id=1002]
+Bot: I'm sorry about your experience. I've passed this to our support team (ticket #1) so a team member can help you personally.
+  [escalated: angry_customer]
 ```
 
-The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. **Order questions are handled by the agent**, with the tools it called shown underneath. Human requests, greetings and off-topic messages still get a fixed placeholder reply until escalation (Milestone 5). On this 8 GB machine a policy or order answer takes about 15–30 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
+This is real output. The second message is neutral but was labelled `negative`. Sentiment is imperfect, and that's exactly why only `angry` escalates: a wrong `negative` costs nothing.
+
+The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. **Order questions are handled by the agent**, with the tools it called shown underneath. **Escalations** show their reason. On this 8 GB machine an answer takes about 15–30 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
+
+To see the tickets that escalations created:
+
+```bash
+python -m scripts.tickets
+```
+
+```
+#1 2026-10-05 17:29:32 [angry_customer] intent=order_issue sentiment=angry order=1002
+    "I'm so angry, I want a refund NOW for order 1002"
+```
 
 **Mock orders to try:**
 
@@ -418,10 +442,12 @@ It makes one real request to the model, then prints the reply, the time it took 
 | Field | Type | Values |
 |---|---|---|
 | `intent` | `Intent` enum | `policy_question`, `order_issue`, `human_request`, `greeting`, `out_of_scope` |
-| `sentiment` | `Sentiment` enum | `positive`, `neutral`, `negative` |
+| `sentiment` | `Sentiment` enum | `positive`, `neutral`, `negative`, `angry` |
 | `order_id` | text or `None` | Digits only, for example `"1042"` |
 
 Because `intent` is an enum, the rest of the code can rely on it being one of exactly five values. Routing never has to handle free text like *"I think this is about shipping"*.
+
+**`negative` and `angry` are deliberately separate** (since Milestone 5). Only `angry` (hostile, shouting, "NOW", "nobody answers me") is escalated. A merely unhappy customer ("a little disappointed… can I return it?") still gets the bot's help, because the bot can answer those.
 
 There is deliberately **no `confidence` field**. A small model's self-reported confidence (for example, "0.92") is not calibrated: it's a number the model makes up, so routing on it would look smart but be unreliable.
 
@@ -438,20 +464,21 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
   - the customer `message` and its `classification`
   - for policy questions: the retrieved `chunks` and the `policy_answer` (answer, sources, answered)
   - for order questions: `messages`, the agent's conversation with its tools
+  - for escalations: the `escalation_reason` and the created `ticket`
   - the final `response`
 
   Each node returns **only the fields it changes**, and LangGraph merges them in. `messages` uses LangGraph's `add_messages` **reducer**, so a node's new messages are *appended* rather than replacing the list.
 - **Nodes:**
   - `classify_intent` calls the classifier.
-  - `retrieve` and `answer` run the RAG pipeline from Milestone 2.
-  - `agent` calls the tool-calling LLM. If its reply contains no tool calls, that reply becomes the `response`.
-  - `tools` is LangGraph's prebuilt `ToolNode`. It runs the requested tools and adds their results as `ToolMessage`s.
-  - `fallback` gives up politely after too many tool rounds.
-  - `respond` returns a placeholder reply for intents without a real branch yet.
-- **Routing:**
-  - `route_by_intent` sends `policy_question` to `retrieve`, `order_issue` to `agent`, and everything else to `respond`.
-  - `route_after_agent` decides the loop: run the tools if the agent asked for any, finish if it answered, or go to `fallback` after more than 3 tool rounds.
-- **`build_graph(...)`** creates the real vector store, answer chain, tools and agent **once**. It accepts fakes for the classifier, retriever, answerer and agent, plus a `db_path`, which is how the unit tests run without models. It **refuses to start** if the order database doesn't exist.
+  - `retrieve` and `answer` run the RAG pipeline from Milestone 2. `answer` sets an escalation reason if the policies don't answer or the model's output is unusable.
+  - `agent` calls the tool-calling LLM. If its reply contains no tool calls, that reply becomes the `response`. It sets an escalation reason if the last tools failed or it has used up its 3 tool rounds.
+  - `tools` is LangGraph's prebuilt `ToolNode`. It runs the requested tools and adds their results as `ToolMessage`s; a failing tool becomes an error message instead of a crash.
+  - `escalate` creates the support ticket and replies with its number. If saving the ticket fails, it says so **without** promising a ticket.
+  - `respond` returns a fixed reply for greetings and off-topic messages.
+- **Routing:** the route functions only read state and return the next node's name. The decision to escalate is made in the node that has the information, so the routing stays trivial.
+  - `route_by_intent` checks `needs_human_now()` first (`human_request` or `angry`) and sends those to `escalate`. Otherwise `policy_question` goes to `retrieve`, `order_issue` to `agent`, and the rest to `respond`.
+  - `route_after_answer` and `route_after_agent` go to `escalate` if an escalation reason was set. `route_after_agent` otherwise runs the tools if the agent asked for any, or finishes.
+- **`build_graph(...)`** creates the real vector store, answer chain, tools and agent **once**. It accepts fakes for the classifier, retriever, answerer and agent, plus `db_path` and `tickets_db_path`, which is how the unit tests run without models or real databases. It **refuses to start** if the order database doesn't exist.
 
 > **Gotchas:**
 > - The state is a Pydantic model, but `graph.invoke(...)` returns a plain **dict**. Use `result["response"]`, not `result.response`.
@@ -488,8 +515,25 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 - **`build_agent(tools)`** is `llm.bind_tools(tools)`. The chat model now sees the tool schemas and can reply with tool calls.
 - **Three safeguards in code** don't rely on the model obeying the prompt:
   1. **Invented order IDs:** before any tool runs, `invented_order_ids()` checks that every requested `order_id` appears in the customer's message. If one doesn't, nothing is looked up and the customer is asked for their order number. This was added because qwen invented `123456` despite the prompt.
-  2. **Tool-round limit:** at most 3 rounds of tool calls per message, then a polite fallback reply.
-  3. **Tool errors:** `ToolNode(handle_tool_errors=True)` returns an exception to the agent as an error message instead of crashing the conversation.
+  2. **Tool-round limit:** at most 3 rounds of tool calls per message, then **escalation** (`agent_gave_up`). The agent's last, unanswered tool-call request is **not** stored, because a history with a tool call but no tool result would break the next turn once conversations are remembered.
+  3. **Tool errors:** `ToolNode(handle_tool_errors=True)` turns an exception into an error `ToolMessage` instead of crashing. The agent node then **escalates** (`tool_error`) rather than letting a 3B model improvise around a broken system.
+
+### `app/tickets.py`: support tickets and escalation reasons
+
+- **Tickets live in their own SQLite file** (`data/tickets.db`), created on first use. The order database is read-only and gets reset by `seed_orders`, but tickets are real records that must survive.
+- **Each ticket stores** the customer's message, intent, sentiment, order number (if any) and the **reason**:
+
+  | Reason | When |
+  |---|---|
+  | `customer_request` | The customer asked for a person |
+  | `angry_customer` | The classifier labelled the message `angry` |
+  | `policy_not_found` | The policies don't answer the question |
+  | `model_error` | The LLM's answer couldn't be parsed |
+  | `agent_gave_up` | The order agent used up its 3 tool rounds |
+  | `tool_error` | A tool crashed (for example, Ollama unavailable during `search_policies`) |
+
+- **Each reason has its own reply**, for example: "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #4)…"
+- **The rule: never promise a human without a ticket.** If saving fails, the customer is told something went wrong and to try again.
 
 ### `scripts/chat.py`: command-line chat
 
@@ -532,13 +576,15 @@ Retrieval **always returns 4 chunks**, even when none is relevant. Unanswerable 
 
 `answer_question(question, chunks)` returns a `PolicyAnswer` with `answered`, `answer` and `sources`.
 
-1. **No chunks:** return the fixed "insufficient information" reply without calling the LLM.
+1. **No chunks:** return `answered=False` without calling the LLM.
 2. **Prompt:** the chunks are pasted in, each labelled `[source: returns.md]`. The rules are: use only these excerpts, never add numbers or rules, set `answered` to false if they don't contain the answer, and list the files used.
 3. **Structured output:** the LLM fills a `PolicyAnswer`. `answered` comes first, so the model decides *whether* it can answer before writing anything. `sources` is a **required** field; when it was optional, the model left it empty in 3 of 4 answers.
 4. **Safety checks in code**, which don't depend on the model behaving:
    - if `answered` is false, the model's own text is replaced with the fixed reply, because qwen sometimes writes things like *"Price matching is not offered"*, a policy claim it can't support
    - any source that wasn't actually retrieved is removed
-   - if the output can't be parsed (for example, a runaway generation cut off at `MAX_OUTPUT_TOKENS`), the fixed reply is returned instead of crashing
+   - if the output can't be parsed (for example, a runaway generation cut off at `MAX_OUTPUT_TOKENS`), it raises **`AnswerGenerationError`**. Until Milestone 5 this returned the same "insufficient information" reply as a missing policy; now the two are kept apart, so a ticket can say *why* the answer failed.
+
+In the graph, `answered=False` and `AnswerGenerationError` both lead to **escalation**, with the reasons `policy_not_found` and `model_error`.
 
 ### `scripts/ingest.py` and `scripts/ask.py`
 
@@ -552,11 +598,15 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py` | No (fakes) | About 4 seconds | `python -m pytest` | 53 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 5 minutes | `python -m pytest -m llm` | 41 passed, 2 xfailed |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py` | No (fakes) | About 4–7 seconds | `python -m pytest` | 60 passed |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 5 minutes | `python -m pytest -m llm` | 45 passed, 2 xfailed |
 
 **Unit tests** check *our* code, using fakes so they're fast and give the same result every time:
-- **Graph routing:** fake classifier, retriever and answerer. Placeholder intents must skip RAG and tools (the fakes raise an error if called). A policy question must go through retrieve and then answer.
+- **Graph routing:** fake classifier, retriever and answerer. Greetings and off-topic messages must skip RAG and tools (the fakes raise an error if called). A policy question must go through retrieve and then answer.
+- **Escalation:** each of the 6 reasons must create exactly one ticket with that reason, using a temporary tickets database per test.
+  - An `angry` customer is escalated **before** the agent runs; a merely `negative` one is still helped by the agent.
+  - When the ticket can't be saved, the reply must not mention a ticket.
+  - When the agent gives up, no tool-call request is left without its result.
 - **Agent loop:** a **scripted fake agent** that returns pre-written replies, including tool calls, while the *real* tools run against a temporary order database. The tests check that:
   - a requested tool runs and the agent's final reply is used
   - an invented order ID is never looked up
@@ -573,11 +623,12 @@ There are two kinds of tests:
 - **Answering:** a fake answer chain. It checks that unretrieved sources are removed, that an unanswered result gets the fixed reply (using a real qwen output as the example), that no chunks means no LLM call, and that unparseable output doesn't crash.
 
 **Real-model tests** check *the models' behaviour*:
-- **Classifier:** 14 messages with expected intents, order-ID extraction and negative sentiment, including **regression cases** the model once got wrong.
+- **Classifier:** 14 messages with expected intents, plus order-ID extraction and **regression cases** the model once got wrong. **Sentiment** tests check a clearly angry message, a mildly disappointed one that must stay `negative` (not escalated), and a borderline complaint whose **escalation decision** is checked rather than its label (see the Milestone 5 log).
 - **Retrieval:** 11 questions, each checking the **document ranked first** *and* that the **specific section** that answers it is in the top 4. They run against a fresh vector store built in a temporary folder, so they don't depend on your local `chroma_db/`.
 - **Answers:** 3 questions whose answers must contain the right fact (`14.99`, `15%`, `150`) and cite the right document, plus 3 questions **no document answers**, which must get the "insufficient information" reply.
 - **Whole graph:**
-  - Policy questions: one answered with its source, and one unanswerable question getting the "insufficient information" reply.
+  - Policy questions: one answered with its source, and one unanswerable question **escalated** as `policy_not_found`.
+  - Escalations: a request for a person (`customer_request`) and an angry refund demand (`angry_customer`, ticket keeps order 1002).
   - Order questions: a status lookup (tracking number in the answer), an eligible return (15% fee), a refused return (hygiene), a **missing order number** (it must ask, with no tool run), and a damaged item (it must use `search_policies` and mention the 48-hour rule).
 - **Shared test data:** fixtures in `conftest.py` build one vector store and one order database **per test session**, in temporary folders.
 
@@ -614,7 +665,9 @@ Each problem below was hit or reproduced during development.
 | Return-window answers look wrong (for example, "window ended" for a recent order) | The order dates are relative to the day the database was seeded, so they age | Re-run `python -m scripts.seed_orders` |
 | A unit test fails with `ConnectionError` | The test is calling a real model. The `conftest.py` safety net blocks that outside `llm` tests | Pass fakes into `build_graph(...)`, or mark the test `@pytest.mark.llm` |
 | Speed varies wildly (the same step takes 0.3 s once and 13 s the next time) | The machine is short of RAM and is paging memory to disk. On an 8 GB machine the two models plus VS Code and a browser don't fit | Close Chrome and other heavy apps while running the assistant |
-| A question takes about a minute and gets the "insufficient information" reply | qwen fell into a **runaway generation** and was cut off at `MAX_OUTPUT_TOKENS`, so its output couldn't be parsed | Expected occasionally with this small model. Before the cap, one runaway took 8 minutes |
+| A test of a sentiment label passes on one run and fails on the next | Temperature 0 is not fully deterministic here, and borderline messages flip between `angry` and `negative` | Test clear examples for labels, and test the **decision** (for example `needs_human_now`) for borderline ones |
+| The bot replies "something went wrong… couldn't pass this to our support team" | Saving the ticket failed (for example, `data/` isn't writable) | Check that `data/tickets.db` can be created and written |
+| A question takes about a minute and ends in an escalation (or, from `scripts.ask`, a model error) | qwen fell into a **runaway generation** and was cut off at `MAX_OUTPUT_TOKENS`, so its output couldn't be parsed | Expected occasionally with this small model. Before the cap, one runaway took 8 minutes |
 
 ---
 
@@ -835,6 +888,59 @@ The agent **picked the right tool every time.** The problems were in *what it di
 - **Order data is mock data** with dates relative to the seeding day.
 - **15–30 s per order answer** on this machine (memory pressure, see Milestone 3).
 
+### Milestone 5: human escalation ✅
+
+**Goal:** when the assistant can't or shouldn't handle a message, create a support ticket and tell the customer, instead of a placeholder or a dead end.
+
+**Built:**
+- A tickets table in its own SQLite file, `create_ticket()` / `list_tickets()`, and `scripts/tickets.py`
+- An `escalate` node with 6 reasons, each with its own reply. If the ticket can't be saved, the reply makes no promise.
+- Escalation from every place a human is needed: classification (asked for a person, or angry), the RAG branch (not in the policies, model error) and the agent (tool error, out of tool rounds)
+- "Insufficient information" split from "model failed" (`AnswerGenerationError`)
+- A new `angry` sentiment, separate from `negative`
+- Unit tests: 8 escalation tests in `test_graph.py` and 3 in `test_tickets.py` (60 unit tests in total, up from 53). Real-model tests: 2 new end-to-end escalation tests (plus one updated) and 3 sentiment tests (replacing one)
+
+**The negative-sentiment decision, made from evidence.** The plan was "escalate angry customers", but the classifier only had `negative`. First I ran 7 negative messages through the real graph (with no sentiment rule yet) and checked each reply against the data:
+
+| Message | What happened | Reply quality |
+|---|---|---|
+| "third time I'm asking, terrible service" | escalated (`human_request`) | ✅ |
+| "waited 3 weeks, nobody answers my emails" | escalated (`human_request`) | ✅ |
+| "Where the hell is my order 1042?" | agent | ✅ tracking number, but **invented** "expected to arrive soon" |
+| "headphones in 2231 arrived broken!" | agent | ⚠️ checked only the status; missed the 48-hour damage rule |
+| "return policy is a joke, how long for headphones?" | RAG | ❌ answered about laptops (15 days), not headphones (30) |
+| "frustrated, laptop 1001 keeps crashing" | agent | ❌ **invented** "it seems to be in working condition" plus troubleshooting advice |
+| "so angry, I want a refund NOW for order 1002" | agent | ❌ didn't check eligibility; asked again for the order number it was given |
+
+**The bot did well for angry customers only 1 time out of 5**, which argues for escalating. But checking the classifier on *mild* messages showed the cost: "a little disappointed the drone is louder… can I return it?", "slower than I hoped, can I still return it?" and "arrived broken, what can I do?" were **all `negative`**. They're easy return questions the agent handles, so **"negative → escalate" would have escalated 3 of 3 needlessly.**
+
+**The fix:** split the label. I added **`angry`** (hostile, swearing, "NOW", "nobody answers") and kept `negative` for disappointed or frustrated, and escalate **only on `angry` or `human_request`**. Measured on 11 messages:
+- **The 6 mild or neutral messages all stay with the bot:** no over-escalation.
+- **3 of 5 angry messages escalate.** The two misses are "Where the hell is my order?" (the bot answered it reasonably anyway) and "Your return policy is a joke" (a real miss; RAG answered badly).
+
+I didn't tune further, because tuning the prompt to 11 sentences would be overfitting.
+
+**Problems hit and how they were fixed:**
+1. **One reply for two different failures.** `answer_question()` returned the same "insufficient information" whether the policies didn't cover the question or the model's output was unusable. A ticket needs to know which. **Fix:** unusable output raises `AnswerGenerationError`, which becomes the `model_error` reason; the Milestone 2 test was updated to expect it.
+2. **A flaky sentiment test, and what it was really telling us.** "This is the third time I'm asking, your service is terrible!" was `angry` in the probe and `negative` in the test run. Repeated 6 times, it was `angry` 2 times and `negative` 4 times, more often `negative` when other messages ran first. But **the intent was `human_request` 6 out of 6 times, so the escalation decision never changed.**
+   **Fix:** the label test uses a clearly angry message ("I'm so angry, I want a refund NOW", `angry` 4 of 4 times, including after other messages), and the borderline message is tested on the **decision** (`needs_human_now`). **Lesson:** test the decision that matters, not an intermediate label on a borderline case.
+3. **Unanswered tool calls in the history (prevented by design).** When the agent runs out of tool rounds, its last reply asks for more tools. If that were stored, the conversation would contain a tool call with no result, which chat models reject on the next turn. It's harmless today, but it would break Milestone 6's memory. **Fix:** that reply isn't stored, and a unit test checks every stored tool call has its result.
+
+**What we learned:**
+- **Measure both kinds of mistake.** "Escalate angry customers" sounded obviously right, and only measuring over-escalation showed the label was too broad.
+- **When one label covers two situations, split it** rather than adding rules around it.
+- **Test decisions, not labels**, when the input is borderline.
+- **Never promise what you didn't do:** no "ticket #N" unless the ticket was saved.
+
+**Known limitations:**
+- **Angry detection misses some cases** (2 of 5 in the probe). Those customers get the bot, with its usual quality.
+- **Sentiment on borderline messages varies between runs**, so the same message can be escalated once and not the next time, *unless* its intent is `human_request`.
+- **Neutral messages are sometimes labelled `negative`** (for example, "Can I return the laptop from order 1001?" in the final chat run). Since `negative` doesn't escalate, this has no effect on the reply.
+- **Tickets record a single message**, not the conversation. Milestone 6's memory will make richer tickets possible.
+- **Nobody is notified about new tickets;** they are only listed by `scripts/tickets.py`.
+- **The bot still invents small details** in some order answers ("expected to arrive soon", "seems to be in working condition"). Only angry customers are protected from that by escalation.
+- **"Thanks, that was helpful!" gets the greeting reply** ("Hi! Welcome to VoltCart support…"). It's harmless but awkward.
+
 ---
 
 ## Roadmap
@@ -846,8 +952,8 @@ The agent **picked the right tool every time.** The problems were in *what it di
 | 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ✅ Done |
 | 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ✅ Done |
 | 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ✅ Done |
-| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ⏳ Next |
-| 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ⬜ |
+| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ✅ Done |
+| 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ⏳ Next |
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ⬜ |
 | 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⬜ |
 | 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⬜ |

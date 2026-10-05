@@ -3,6 +3,7 @@
 import pytest
 
 from app.classifier import build_classifier
+from app.graph import needs_human_now
 from app.schemas import Intent, Sentiment
 
 pytestmark = pytest.mark.llm
@@ -42,6 +43,20 @@ def test_extracts_order_id_without_hash(classifier):
     assert classifier.invoke({"message": "Where is my order #1042?"}).order_id == "1042"
 
 
-def test_detects_negative_sentiment(classifier):
+def test_detects_angry_sentiment(classifier):
+    # Stable: "angry" in 4 of 4 runs, including after other messages.
+    result = classifier.invoke({"message": "I'm so angry, I want a refund NOW for order 1002"})
+    assert result.sentiment == Sentiment.ANGRY
+
+
+def test_borderline_complaint_is_escalated_either_way(classifier):
+    # Borderline: sentiment flipped between angry (2 of 6 runs) and negative (4 of 6), but the intent
+    # was human_request every time, so the escalation decision never changed. Test the decision, not the label.
     result = classifier.invoke({"message": "This is the third time I'm asking, your service is terrible!"})
-    assert result.sentiment == Sentiment.NEGATIVE
+    assert needs_human_now(result)
+
+
+def test_mild_disappointment_is_negative_not_angry(classifier):
+    # Must not be escalated: the bot can answer this return question.
+    message = "I'm a little disappointed the drone is louder than expected, can I return it? Order 1006"
+    assert classifier.invoke({"message": message}).sentiment == Sentiment.NEGATIVE

@@ -25,6 +25,8 @@ def main() -> None:
             print(f"  [sources={result['policy_answer'].sources} answered={result['policy_answer'].answered}]")
         for tool_call in [call for m in result.get("messages", []) for call in getattr(m, "tool_calls", [])]:
             print(f"  [tool: {tool_call['name']}({tool_call['args']})]")
+        if result.get("escalation_reason"):
+            print(f"  [escalated: {result['escalation_reason']}]")
 
 
 if __name__ == "__main__":

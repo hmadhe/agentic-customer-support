@@ -3,18 +3,22 @@
 import pytest
 from langchain_core.messages import ToolMessage
 
-from app.answer import INSUFFICIENT_ANSWER
 from app.graph import build_graph
 from app.retriever import retrieve
 from app.schemas import Intent
+from app.tickets import EscalationReason
 
 pytestmark = pytest.mark.llm
 
 
 @pytest.fixture(scope="module")
-def graph(policy_store, order_db):
-    # Real classifier, answer chain and agent; test copies of the policy store and order database.
-    return build_graph(retriever=lambda question: retrieve(question, vector_store=policy_store), db_path=order_db)
+def graph(policy_store, order_db, tmp_path_factory):
+    # Real classifier, answer chain and agent; test copies of the policy store, order and ticket databases.
+    return build_graph(
+        retriever=lambda question: retrieve(question, vector_store=policy_store),
+        db_path=order_db,
+        tickets_db_path=tmp_path_factory.mktemp("tickets") / "tickets.db",
+    )
 
 
 def tools_called(result) -> list[str]:
@@ -29,10 +33,25 @@ def test_policy_question_is_answered_from_the_policies(graph):
     assert result["policy_answer"].sources == ["shipping.md"]
 
 
-def test_unanswerable_policy_question_gets_the_insufficient_reply(graph):
+def test_unanswerable_policy_question_is_escalated(graph):
     result = graph.invoke({"message": "Do you offer price matching?"})
 
-    assert result["response"] == INSUFFICIENT_ANSWER
+    assert result["escalation_reason"] == EscalationReason.POLICY_NOT_FOUND
+    assert f"ticket #{result['ticket'].ticket_id}" in result["response"]
+
+
+def test_request_for_a_human_is_escalated(graph):
+    result = graph.invoke({"message": "I want to talk to a real person."})
+
+    assert result["escalation_reason"] == EscalationReason.CUSTOMER_REQUEST
+    assert result["ticket"].customer_message == "I want to talk to a real person."
+
+
+def test_angry_customer_is_escalated(graph):
+    result = graph.invoke({"message": "I'm so angry, I want a refund NOW for order 1002"})
+
+    assert result["escalation_reason"] == EscalationReason.ANGRY_CUSTOMER
+    assert result["ticket"].order_id == "1002"
 
 
 def test_order_status_is_looked_up(graph):
