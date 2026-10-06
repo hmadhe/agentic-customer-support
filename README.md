@@ -1,10 +1,12 @@
 # Agentic Customer Support Assistant
 
+[![tests](https://github.com/hmadhe/agentic-customer-support/actions/workflows/tests.yml/badge.svg)](https://github.com/hmadhe/agentic-customer-support/actions/workflows/tests.yml)
+
 An AI customer-support assistant for **VoltCart**, a fictional online electronics store. When finished, it will answer policy questions from company documents (RAG), look up orders using tools, and hand the conversation to a human when it should. It is built with **LangChain, LangGraph, Pydantic and FastAPI** and runs on a **local LLM through Ollama**, so no paid API key is needed.
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 7 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
+> **Status:** Milestone 8 of 10 complete. The unit tests run automatically on GitHub Actions for every push. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
 
 ---
 
@@ -170,6 +172,7 @@ agentic-customer-support/
 │   ├── chat.py           # Command-line chat: type a message, see intent and reply
 │   ├── ingest.py         # Builds the vector store from data/policies/
 │   ├── seed_orders.py    # Creates the mock order database data/voltcart.db
+│   ├── pass_rates.py     # Runs the real-model tests N times and reports each test's pass rate
 │   ├── tickets.py        # Lists the support tickets created by escalations
 │   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
 ├── tests/
@@ -182,12 +185,15 @@ agentic-customer-support/
 │   ├── test_memory.py           # Unit tests: multi-turn conversations, per-turn reset, trimming, restart
 │   ├── test_api.py              # Unit tests: every endpoint, errors, concurrency, startup failure (fake graph)
 │   ├── test_api_llm.py          # Real-model test: a policy question through the API (-m llm)
+│   ├── test_pass_rates.py       # Unit test: reading pytest's JUnit XML results
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
 │   ├── test_classifier_llm.py   # Real-model tests: classification accuracy (run with -m llm)
 │   ├── test_rag_llm.py          # Real-model tests: retrieval and answers on the real documents (-m llm)
 │   └── test_graph_llm.py        # Real-model tests: whole graph end to end (-m llm)
+├── .github/workflows/
+│   └── tests.yml         # GitHub Actions: runs the unit tests on every push and pull request
 ├── .env.example          # Template for your local .env (committed to git)
 ├── .gitignore            # Keeps .env, .venv/ and caches out of git
 ├── pytest.ini            # pytest configuration
@@ -301,7 +307,7 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `94 passed, 51 deselected`. The 51 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `101 passed, 51 deselected`. The 51 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
 ### 8. Build the policy vector store and the order database
 
@@ -688,10 +694,10 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py` | No (fakes) | About 6 seconds | `python -m pytest` | 94 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 7–8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing intermittently** (see below) |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py`, `test_pass_rates.py` | No (fakes) | About 8 seconds | `python -m pytest` | 101 passed, also on GitHub Actions |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing** (see below) |
 
-> **Known flaky test:** `test_damaged_item_question_uses_the_policy_tool` passes when run alone (6 of 6) but failed 2 of 2 times when run after the other tests in Milestone 7. The agent then calls `get_order_status` instead of `search_policies`, and the customer misses the 48-hour damage rule. It's left strict on purpose; see the [Milestone 7 log](#milestone-7-http-api-with-fastapi-).
+> **Known failing test:** `test_damaged_item_question_uses_the_policy_tool`. **Run alone, or after one other test, it passes** (10 of 10 times). **After at least 3 other real-model tests it fails** (10 of 10 times, including all 3 runs of `scripts/pass_rates.py`). The agent then calls `get_order_status` instead of `search_policies`, and the customer misses the 48-hour damage rule. The cause is not found yet; what's been ruled out is in the [Milestone 8 log](#milestone-8-testing-coverage-ci-and-pass-rates-). It's left strict on purpose: a real server always has earlier requests, so the failing condition is the realistic one.
 
 **Unit tests** check *our* code, using fakes so they're fast and give the same result every time:
 - **Graph routing:** fake classifier, retriever and answerer. Greetings and off-topic messages must skip RAG and tools (the fakes raise an error if called). A policy question must go through retrieve and then answer.
@@ -747,6 +753,31 @@ There are two kinds of tests:
 **How the split works:** `pytest.ini` marks real-model tests with `llm` and skips them by default (`addopts = -m "not llm"`). Running `pytest -m llm` overrides that. `pythonpath = .` lets tests `import app` from the project root.
 
 **Rule of thumb:** after changing the **prompt**, run `pytest -m llm`, because a fix for one message can break another.
+
+### Continuous integration
+
+`.github/workflows/tests.yml` runs the unit tests (with a coverage report) on a clean Linux machine for **every push and pull request**. That also proves they don't depend on this computer: CI has no Ollama, no `.env`, no vector store and no databases. The badge at the top of this README shows the latest result. Real-model tests don't run in CI, because they need Ollama and about 8 minutes.
+
+### Coverage
+
+```bash
+python -m pytest --cov=app --cov=scripts --cov-report=term-missing
+```
+
+The unit tests cover **97% of `app/`**. The uncovered lines are where the *real* model, embeddings and stores are created; unit tests replace those with fakes on purpose, and the real-model tests run them. The CLI scripts in `scripts/` (except `pass_rates.py`) have no tests.
+
+**What the coverage report found:** the first report showed 83%. Reading the missed lines (rather than the percentage) found two real gaps in customer-facing text: no test covered the status text of a *delivered* order, and none covered "No order found" from the return-eligibility tool. Both have tests now.
+
+### Pass rates for real-model tests
+
+A model can pass a test 4 times out of 5, and a single run turns that into a misleading pass or fail. So:
+
+```bash
+python -m scripts.pass_rates --runs 3                      # all real-model tests, about 25 minutes
+python -m scripts.pass_rates --runs 5 tests/test_graph_llm.py
+```
+
+It runs the real-model tests N times, reads pytest's JUnit XML report from each run, and lists every test that didn't pass every time, with its rate (for example `2/3`). Known `xfail`s are left out.
 
 ---
 
@@ -1181,6 +1212,48 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **The damaged-item tool choice is intermittent,** as described above.
 - **`data/conversations.db` keeps every conversation forever;** nothing cleans up old ones.
 
+### Milestone 8: testing (coverage, CI and pass rates) ✅
+
+**Goal:** most of the originally planned unit and API tests already existed, so this milestone focused on what Milestone 7 exposed: how trustworthy the tests themselves are.
+
+**Built:**
+- **A coverage report** (`pytest-cov`), plus tests for the 2 real gaps it found
+- **GitHub Actions** (`.github/workflows/tests.yml`): the unit tests on every push and pull request, on a clean Linux machine. **Passed on the first run**, which proves the unit tests need nothing from this PC.
+- **`scripts/pass_rates.py`**: runs the real-model tests N times and reports pass rates. Its parsing was checked against real `pytest --junitxml` output, and it has a unit test.
+- 7 new unit tests (101 in total)
+
+**Results:**
+1. **Coverage.** 83% at first. Reading the *missed lines* mattered more than the number: most were the real model and store setup that unit tests deliberately replace with fakes. **Two were real gaps in customer-facing text** (the status text of a delivered order, and "No order found" from the eligibility tool). With those tests: **97% of `app/`**.
+2. **Pass rates over 3 full real-model runs:** **47 tests passed every time**, and **1 never passed** (the damaged-item test). Apart from the known `xfail`s, **no other real-model test is flaky**. Until now I couldn't have said that.
+
+**The damaged-item investigation (cause not found; time-boxed):**
+
+| Theory | How I tested it | Result |
+|---|---|---|
+| Ollama's prompt cache or model state (my explanation since Milestone 2) | **Unload the model** (`ollama stop`) right before the test. I also checked the unload really happens: exit code 0, and the model is gone from `ollama ps` | ❌ **Disproved:** a freshly loaded model still failed |
+| One specific earlier test triggers it | **Bisect:** run it after tests 1–3 only, and after tests 4–11 only | ❌ **Disproved:** both halves trigger it |
+| The agent receives different input | Compare the prompt sizes in **Ollama's log** across runs | ❌ **Not supported:** identical every time (343, 489, 663 tokens) |
+| How many tests ran first | All runs so far | ✅ **Observed:** after ≤1 tests, passed **10 of 10**; after ≥3 tests, failed **10 of 10** |
+
+What's left is something inside a longer-running test process, which I haven't identified. **Correction:** earlier milestone logs offered "Ollama's prompt cache" as a *possible* explanation for other run-to-run differences. For this failure it has now been tested and ruled out.
+
+**Problems hit and how they were fixed:**
+1. **I corrupted the README while changing the port** (commit `2c2a743`). Windows PowerShell 5.1's `Get-Content` reads UTF-8 files as ANSI, so writing the text back mangled **140 lines** (✅ became "âœ…", dashes became "â€“"), and it was pushed. **Fix:** restored the README from the previous commit and reapplied the port change with Python and explicit UTF-8. A scan of all 50 tracked files then found **one more side effect**: a UTF-8 byte-order mark in `app/api.py` from an earlier `Set-Content`. It was removed. All file edits now go through the editor or Python.
+2. **SQLite companion files were pushed** at the end of Milestone 7 (`conversations.db-wal`/`-shm`, mock test conversations only). They're now ignored and untracked; they remain in the history of commit `2b97cd0`.
+
+**What we learned:**
+- **Read coverage line by line.** 83% hid two real gaps, while most of the "missing" 17% was intentional.
+- **CI on a clean machine is the real test of "no hidden dependencies".**
+- **Measure flakiness as a rate.** "Flaky" turned out to mean "fails every time in a full run".
+- **Test your explanations.** An explanation I had repeated since Milestone 2 failed its first real test.
+- **Verify the tooling:** the unload step, the XML parser, and the file encoding all looked fine until checked.
+
+**Known limitations:**
+- **The damaged-item failure is unexplained and still fails** in full runs.
+- **Real-model tests don't run in CI** (they need Ollama), so model-behaviour regressions are only caught by running `pytest -m llm` or `scripts/pass_rates.py` locally.
+- **A full pass-rate measurement takes about 25 minutes** for 3 runs on this machine.
+- **The CLI scripts have no tests.**
+
 ---
 
 ## Roadmap
@@ -1195,8 +1268,8 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 | 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ✅ Done |
 | 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ✅ Done |
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ✅ Done |
-| 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⏳ Next |
-| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⬜ |
+| 8 | Testing | Coverage report, GitHub Actions, pass rates for real-model tests, the flaky-test investigation | ✅ Done |
+| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⏳ Next |
 | 10 | Polish | Final docs, diagrams, demo | ⬜ |
 
 ---
