@@ -1,0 +1,798 @@
+[
+  {
+    "id": "P01",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Express shipping costs $14.99.",
+    "seconds": 72.0
+  },
+  {
+    "id": "P02",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Standard shipping takes 5–7 business days.",
+    "seconds": 19.0
+  },
+  {
+    "id": "P03",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Delivery to Canada takes 7–10 business days with standard shipping.",
+    "seconds": 17.9
+  },
+  {
+    "id": "P04",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Next-day shipping is not available in Canada.",
+    "seconds": 17.9
+  },
+  {
+    "id": "P05",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "15% restocking fee for opened cameras.",
+    "seconds": 18.8
+  },
+  {
+    "id": "P06",
+    "category": "policy",
+    "passed": false,
+    "checks": {
+      "route": false,
+      "source": false,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "search_policies"
+    ],
+    "reply": "You cannot return opened earbuds due to hygiene reasons. Please contact customer support for further assistance.",
+    "seconds": 21.7
+  },
+  {
+    "id": "P07",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Refunds are processed within 5–7 business days after we receive and inspect your return.",
+    "seconds": 24.4
+  },
+  {
+    "id": "P08",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Return shipping is free if the item is defective or we made a mistake. Otherwise, $7.99 is deducted from your refund.",
+    "seconds": 23.5
+  },
+  {
+    "id": "P09",
+    "category": "policy",
+    "passed": false,
+    "checks": {
+      "route": false,
+      "source": false,
+      "facts": false
+    },
+    "route": "escalate",
+    "escalation_reason": "policy_not_found",
+    "tools": [],
+    "reply": "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #1). A team member will contact you soon.",
+    "seconds": 16.9
+  },
+  {
+    "id": "P10",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "The manufacturer warranty is usually 1 year from the date of delivery.",
+    "seconds": 21.0
+  },
+  {
+    "id": "P11",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Refurbished products come with a 90-day VoltCart warranty.",
+    "seconds": 19.2
+  },
+  {
+    "id": "P12",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "The plan has a $49 fee for each accidental damage claim.",
+    "seconds": 22.6
+  },
+  {
+    "id": "P13",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "No, the warranty does not cover loss or theft.",
+    "seconds": 19.9
+  },
+  {
+    "id": "P14",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "VoltCart accepts Visa, Mastercard, American Express, Discover, PayPal, Apple Pay, Google Pay and VoltCart gift cards.",
+    "seconds": 18.8
+  },
+  {
+    "id": "P15",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Your card is authorized when you place the order, and charged only when the order ships.",
+    "seconds": 19.5
+  },
+  {
+    "id": "P16",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "The minimum order amount for Pay Later is $150.",
+    "seconds": 19.2
+  },
+  {
+    "id": "P17",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "You can use up to 3 gift cards on one order.",
+    "seconds": 18.5
+  },
+  {
+    "id": "P18",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "The reset link is valid for 1 hour.",
+    "seconds": 18.8
+  },
+  {
+    "id": "P19",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "After 5 failed sign-in attempts, your account is locked for 30 minutes.",
+    "seconds": 18.8
+  },
+  {
+    "id": "P20",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Your order history is kept in your account for 3 years.",
+    "seconds": 17.8
+  },
+  {
+    "id": "P21",
+    "category": "policy",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Order and shipping emails cannot be turned off.",
+    "seconds": 19.3
+  },
+  {
+    "id": "U01",
+    "category": "policy_unanswerable",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "policy_not_found",
+    "tools": [],
+    "reply": "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #2). A team member will contact you soon.",
+    "seconds": 16.9
+  },
+  {
+    "id": "U02",
+    "category": "policy_unanswerable",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "policy_not_found",
+    "tools": [],
+    "reply": "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #3). A team member will contact you soon.",
+    "seconds": 18.7
+  },
+  {
+    "id": "U03",
+    "category": "policy_unanswerable",
+    "passed": false,
+    "checks": {
+      "route": false,
+      "escalation_reason": false
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "I need to know your order ID to check if you can pick up your order in a store. Could you please provide your order ID?",
+    "seconds": 13.7
+  },
+  {
+    "id": "U04",
+    "category": "policy_unanswerable",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "policy_not_found",
+    "tools": [],
+    "reply": "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #4). A team member will contact you soon.",
+    "seconds": 19.0
+  },
+  {
+    "id": "O01",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "Your order 1042 of Bose QuietComfort headphones has been shipped. The tracking number is VC104200.",
+    "seconds": 17.4
+  },
+  {
+    "id": "O02",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "Your order 1007 has shipped and your iPad Air tablet is in the processing stage. It was ordered on 2026-10-06. Tracking information will be provided once available.",
+    "seconds": 18.7
+  },
+  {
+    "id": "O03",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You can return the laptop from order 1001 until October 11, 2026. A 15% restocking fee applies.",
+    "seconds": 18.7
+  },
+  {
+    "id": "O04",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You cannot return the laptop from order 1002 as the 15-day return window has already ended on 2026-10-01.",
+    "seconds": 18.3
+  },
+  {
+    "id": "O05",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You cannot return the earbuds from order 1004. They are opened in-ear headphones and earbuds, which cannot be returned due to hygiene reasons.",
+    "seconds": 19.0
+  },
+  {
+    "id": "O06",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You can return the drone from order 1006 until November 2, 2026. A 15% restocking fee applies.",
+    "seconds": 18.9
+  },
+  {
+    "id": "O07",
+    "category": "order",
+    "passed": false,
+    "checks": {
+      "route": true,
+      "tools": false,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "search_policies"
+    ],
+    "reply": "Gift cards from order 1008 cannot be returned according to VoltCart's policies. They cannot be exchanged for cash and never expire.",
+    "seconds": 21.0
+  },
+  {
+    "id": "O08",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You cannot return the camera from order 1009 as it is a clearance item marked 'Final sale'.",
+    "seconds": 16.0
+  },
+  {
+    "id": "O09",
+    "category": "order",
+    "passed": false,
+    "checks": {
+      "route": true,
+      "tools": false,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "I can check if you can return your TV. Since the order is still in transit, we need to wait until it arrives to determine if it's eligible for return. Please check the tracking number for updates.",
+    "seconds": 19.9
+  },
+  {
+    "id": "O10",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "I'm sorry, but there is no order found with the number 9999. Could you please provide the correct order number?",
+    "seconds": 16.9
+  },
+  {
+    "id": "O11",
+    "category": "order",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "no_tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Could you please give me your order number? You can find it in your order confirmation email.",
+    "seconds": 8.8
+  },
+  {
+    "id": "O12",
+    "category": "order",
+    "passed": false,
+    "checks": {
+      "route": true,
+      "tools": false,
+      "facts": false
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "I see your headphones were delivered on October 5, 2026. They are already in your possession. Let's check if we can return them due to damage.",
+    "seconds": 15.3
+  },
+  {
+    "id": "E01",
+    "category": "escalation",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "customer_request",
+    "tools": [],
+    "reply": "I've passed your request to our support team (ticket #5). A team member will contact you soon.",
+    "seconds": 5.0
+  },
+  {
+    "id": "E02",
+    "category": "escalation",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "customer_request",
+    "tools": [],
+    "reply": "I've passed your request to our support team (ticket #6). A team member will contact you soon.",
+    "seconds": 2.9
+  },
+  {
+    "id": "E03",
+    "category": "escalation",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "escalation_reason": true
+    },
+    "route": "escalate",
+    "escalation_reason": "angry_customer",
+    "tools": [],
+    "reply": "I'm sorry about your experience. I've passed this to our support team (ticket #7) so a team member can help you personally.",
+    "seconds": 3.0
+  },
+  {
+    "id": "E04",
+    "category": "escalation",
+    "passed": true,
+    "checks": {
+      "route": true
+    },
+    "route": "escalate",
+    "escalation_reason": "customer_request",
+    "tools": [],
+    "reply": "I've passed your request to our support team (ticket #8). A team member will contact you soon.",
+    "seconds": 2.7
+  },
+  {
+    "id": "E05",
+    "category": "no_escalation",
+    "passed": false,
+    "checks": {
+      "route": true,
+      "tools": false,
+      "facts": false
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "get_order_status"
+    ],
+    "reply": "I found your order 1006 is the DJI Mini 4 drone. It was delivered on 2026-10-03. You cannot return this order as it's already delivered.",
+    "seconds": 19.2
+  },
+  {
+    "id": "E06",
+    "category": "no_escalation",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "You can return the laptop from order 1001 until October 11, 2026. A 15% restocking fee will apply.",
+    "seconds": 21.1
+  },
+  {
+    "id": "G01",
+    "category": "other",
+    "passed": true,
+    "checks": {
+      "route": true
+    },
+    "route": "respond",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Hi! Welcome to VoltCart support. How can I help you today?",
+    "seconds": 5.2
+  },
+  {
+    "id": "G02",
+    "category": "other",
+    "passed": true,
+    "checks": {
+      "route": true
+    },
+    "route": "respond",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Sorry, I can only help with VoltCart orders and store policies.",
+    "seconds": 2.9
+  },
+  {
+    "id": "G03",
+    "category": "other",
+    "passed": true,
+    "checks": {
+      "route": true
+    },
+    "route": "respond",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "Sorry, I can only help with VoltCart orders and store policies.",
+    "seconds": 2.8
+  },
+  {
+    "id": "M01",
+    "category": "multi_turn",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "tools": true,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "check_return_eligibility"
+    ],
+    "reply": "Your order 1001 can be returned until 2026-10-11. A 15% restocking fee applies.",
+    "seconds": 39.6
+  },
+  {
+    "id": "M02",
+    "category": "multi_turn",
+    "passed": false,
+    "checks": {
+      "route": false,
+      "source": false,
+      "facts": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "search_policies"
+    ],
+    "reply": "Express shipping costs $14.99 and takes 2-3 business days.",
+    "seconds": 26.7
+  },
+  {
+    "id": "M03",
+    "category": "multi_turn",
+    "passed": false,
+    "checks": {
+      "route": false,
+      "source": false,
+      "facts": false
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "To provide you with the shipping time, I need to know your order ID. Could you please share that with me?",
+    "seconds": 33.4
+  },
+  {
+    "id": "M04",
+    "category": "multi_turn",
+    "passed": true,
+    "checks": {
+      "route": true,
+      "source": true,
+      "facts": true
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "You can use up to 3 gift cards on one order.",
+    "seconds": 40.8
+  },
+  {
+    "id": "H01",
+    "category": "hard",
+    "passed": false,
+    "checks": {
+      "facts": false,
+      "no_hallucination": true
+    },
+    "route": "agent",
+    "escalation_reason": null,
+    "tools": [
+      "search_policies"
+    ],
+    "reply": "Since your laptop is opened, you can return it within 15 days of delivery with a 15% restocking fee. If you believe the laptop is defective, you may return it without the restocking fee. Please contact customer support for further assistance.",
+    "seconds": 33.8
+  },
+  {
+    "id": "H02",
+    "category": "hard",
+    "passed": false,
+    "checks": {
+      "facts": false
+    },
+    "route": "rag",
+    "escalation_reason": null,
+    "tools": [],
+    "reply": "You have 15 days to return opened laptops, tablets, and phones, but in-ear headphones and earbuds cannot be returned once opened for hygiene reasons.",
+    "seconds": 22.7
+  }
+]

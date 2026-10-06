@@ -6,7 +6,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 8 of 10 complete. The unit tests run automatically on GitHub Actions for every push. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
+> **Status:** Milestone 9 of 10 complete. An evaluation on 52 realistic cases gives **79% passing every check** and **87% correct for the customer** ([results](#evaluation)). The unit tests run automatically on GitHub Actions for every push. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
 
 ---
 
@@ -167,12 +167,17 @@ agentic-customer-support/
 │   └── api.py            # FastAPI app: /chat, /tickets, /health
 ├── data/
 │   └── policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
+├── eval/
+│   ├── golden_set.json   # 52 evaluation cases with their expected behaviour
+│   ├── report.md         # Latest evaluation report (generated)
+│   └── results.json      # Latest per-case results (generated)
 ├── scripts/
 │   ├── hello_llm.py      # Smoke test: makes one real call to the LLM
 │   ├── chat.py           # Command-line chat: type a message, see intent and reply
 │   ├── ingest.py         # Builds the vector store from data/policies/
 │   ├── seed_orders.py    # Creates the mock order database data/voltcart.db
 │   ├── pass_rates.py     # Runs the real-model tests N times and reports each test's pass rate
+│   ├── evaluate.py       # Runs the golden dataset against the real assistant and writes eval/report.md
 │   ├── tickets.py        # Lists the support tickets created by escalations
 │   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
 ├── tests/
@@ -186,6 +191,7 @@ agentic-customer-support/
 │   ├── test_api.py              # Unit tests: every endpoint, errors, concurrency, startup failure (fake graph)
 │   ├── test_api_llm.py          # Real-model test: a policy question through the API (-m llm)
 │   ├── test_pass_rates.py       # Unit test: reading pytest's JUnit XML results
+│   ├── test_evaluate.py         # Unit tests: golden-set validity and the evaluator's checks
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
@@ -307,7 +313,7 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `101 passed, 51 deselected`. The 51 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `106 passed, 51 deselected`. The 51 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
 ### 8. Build the policy vector store and the order database
 
@@ -694,7 +700,7 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py`, `test_pass_rates.py` | No (fakes) | About 8 seconds | `python -m pytest` | 101 passed, also on GitHub Actions |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py`, `test_pass_rates.py`, `test_evaluate.py` | No (fakes) | About 8 seconds | `python -m pytest` | 106 passed, also on GitHub Actions |
 | **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing** (see below) |
 
 > **Known failing test:** `test_damaged_item_question_uses_the_policy_tool`. **Run alone, or after one other test, it passes** (10 of 10 times). **After at least 3 other real-model tests it fails** (10 of 10 times, including all 3 runs of `scripts/pass_rates.py`). The agent then calls `get_order_status` instead of `search_policies`, and the customer misses the 48-hour damage rule. The cause is not found yet; what's been ruled out is in the [Milestone 8 log](#milestone-8-testing-coverage-ci-and-pass-rates-). It's left strict on purpose: a real server always has earlier requests, so the failing condition is the realistic one.
@@ -753,6 +759,46 @@ There are two kinds of tests:
 **How the split works:** `pytest.ini` marks real-model tests with `llm` and skips them by default (`addopts = -m "not llm"`). Running `pytest -m llm` overrides that. `pythonpath = .` lets tests `import app` from the project root.
 
 **Rule of thumb:** after changing the **prompt**, run `pytest -m llm`, because a fix for one message can break another.
+
+### Evaluation
+
+The tests check *specific* behaviours. The **evaluation** measures how well the assistant does across a fixed set of **52 realistic cases**, by category:
+
+```bash
+python -m scripts.evaluate                 # about 15-20 minutes; writes eval/report.md and eval/results.json
+python -m scripts.evaluate --only P01,O03  # selected cases, for debugging
+```
+
+- **`eval/golden_set.json`** holds each case's customer message(s) and what should happen: the **route** (RAG, agent, escalation, fixed reply), the **escalation reason**, the **source** document, the **tools** to call (or none), the **key facts** the reply must contain (with accepted alternatives, such as `5–7|5-7|5 to 7`), and known **hallucinations** it must not contain.
+- **The expectations come from the policy documents and the seeded orders**, not from what the bot currently says, and **known hard cases are included** so the score isn't flattering.
+- **Every run uses a fresh temporary setup** (seeded orders, newly ingested policies, empty tickets), so it doesn't depend on or change your local data.
+- **The checks are deterministic**, with no "LLM as judge". A 3B model judging its own answers would be unreliable.
+
+**Latest results** (full report: [`eval/report.md`](eval/report.md)):
+
+| Category | Passed every check |
+|---|---|
+| Policy questions | 19/21 |
+| Questions the policies don't answer | 3/4 |
+| Order questions | 9/12 |
+| Escalation (person requested or angry) | 4/4 |
+| Mildly unhappy, must *not* escalate | 1/2 |
+| Greetings and off-topic | 3/3 |
+| Multi-turn | 2/4 |
+| Known hard cases | 0/2 |
+| **Total** | **41/52 (79%)** |
+
+**The 11 failures, read one by one:**
+
+| What went wrong | Cases | Did the customer get a correct answer? |
+|---|---|---|
+| Wrong route or tool, but the answer was correct | P06, O07, O09, M02 | ✅ Yes |
+| An answerable policy question was escalated as "not in the policies" | P09 ("Do you offer exchanges?") | ❌ No, an unnecessary ticket |
+| "my order" in a general question sent it to the order agent, which asked for an order number | U03 ("Can I pick up my order in a store?") | ❌ No |
+| **The agent skipped the eligibility tool and made up a rule** | **E05** ("…can I return it? Order 1006" got *"You cannot return this order as it's already delivered"*, which is **false**) | ❌ **No, and harmful** |
+| Known limitations (the damage rule, a pronoun follow-up, the warranty mix-up, the angry policy question) | O12, M03, H01, H02 | ❌ No |
+
+So **45 of 52 (87%) customers got a correct answer**, and **7 did not**. The most important finding is E05: a confidently **wrong** answer is worse than an escalation.
 
 ### Continuous integration
 
@@ -1254,6 +1300,44 @@ What's left is something inside a longer-running test process, which I haven't i
 - **A full pass-rate measurement takes about 25 minutes** for 3 runs on this machine.
 - **The CLI scripts have no tests.**
 
+### Milestone 9: evaluation ✅
+
+**Goal:** measure the assistant on a fixed, realistic set of cases across every category, including the known hard ones, and find out which failures actually hurt customers.
+
+**Built:**
+- `eval/golden_set.json`: 52 cases (21 answerable policy questions, 4 unanswerable, 12 order questions, 4 escalations, 2 mildly unhappy customers who must *not* be escalated, 3 greetings or off-topic messages, 4 multi-turn conversations, 2 known hard cases)
+- `scripts/evaluate.py`: runs every case against the real graph in a fresh temporary setup, applies deterministic checks, and writes `eval/report.md` and `eval/results.json`
+- 5 unit tests for the evaluator: the golden set is valid, and every check can pass and fail (106 unit tests in total)
+
+**Results** (details in the [Evaluation](#evaluation) section): **41 of 52 (79%) passed every check**, and **45 of 52 (87%) customers got a correct answer**. Two full runs failed on **exactly the same cases**, so the numbers are repeatable.
+
+**Problems hit and how they were fixed:**
+1. **Too-lenient expectations in my dataset.** One case accepted `no` as a correct answer, and two accepted `3` on its own. Since checks match substrings, `no` matches "**no**t" or "k**no**w", and `3` matches any date containing a 3. A unit test now rejects accepted answers shorter than 2 characters, or `no`; that test caught the `3`s.
+2. **A full evaluation would have crashed at the very end.** A 3-case smoke run first finished its cases, then crashed deleting the temporary folder (`PermissionError`: on Windows, Chroma keeps its index file open). The report is written *after* that cleanup, so a 17-minute run would have produced nothing. **Fix:** `ignore_cleanup_errors=True`. A smoke run before the long run paid for itself.
+3. **Two expectations were wrong; corrected after review.** After the first run (40 of 52), I read every failure:
+   - **P04's** reply ("Next-day shipping is not available in Canada.") was correct, but I'd required the words "United States".
+   - **O09's** reply ("still in transit… wait until it arrives") was right in substance, but I hadn't accepted "in transit". O09 still fails its *tool* check, correctly.
+
+   Both corrections are justified by the documents. No expectation was changed just to make a case pass.
+
+**What the evaluation found that the tests hadn't:**
+- **A confidently wrong answer (E05).** For a mildly unhappy customer asking to return order 1006, the agent skipped the eligibility tool and said *"You cannot return this order as it's already delivered."* **That's false.** The invented-ID guard stops made-up *order numbers*, but nothing stops made-up *rules*.
+- **"my order" pulls general questions into the order route** (U03, "Can I pick up my order in a store?"), so the bot asks for an order number when it should hand over.
+- **An answerable policy question was escalated** (P09, exchanges), so a ticket was created for something the documents answer.
+- **Route and tool mistakes often don't hurt.** In 4 of 11 failures (P06, O07, O09, M02) the route or tool was "wrong", but the answer was correct. A strict score of 79% understates what customers experience (87% correct).
+
+**What we learned:**
+- **Validate the evaluation itself.** Of the first 12 failures, 2 were my mistakes, and the dataset had 3 accepted answers that were too loose.
+- **Score customer outcomes, not just process.** "Wrong tool" and "wrong answer" are very different failures.
+- **Run the evaluation twice** before trusting it. Here it was stable.
+- **A small smoke run first** saved a wasted 17-minute run.
+
+**Known limitations:**
+- **52 cases is a small sample,** written by one person who also wrote the documents.
+- **Substring checks are coarse.** They confirm a key fact is present, not that the whole reply is correct or well phrased (H01 passed its "no hallucination" check yet was still wrong).
+- **Each run takes 15–20 minutes** on this machine, and it isn't run in CI.
+- **The failures are measured, not fixed.** Fixing them is the next step.
+
 ---
 
 ## Roadmap
@@ -1269,8 +1353,8 @@ What's left is something inside a longer-running test process, which I haven't i
 | 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ✅ Done |
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ✅ Done |
 | 8 | Testing | Coverage report, GitHub Actions, pass rates for real-model tests, the flaky-test investigation | ✅ Done |
-| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⏳ Next |
-| 10 | Polish | Final docs, diagrams, demo | ⬜ |
+| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ✅ Done |
+| 10 | Polish | Final docs, diagrams, demo | ⏳ Next |
 
 ---
 
