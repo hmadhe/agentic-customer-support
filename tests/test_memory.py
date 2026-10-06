@@ -3,6 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
+from app.agent import current_turn
 from app.graph import RESPONSES, build_graph
 from app.memory import format_history, make_checkpointer, recent_messages
 from app.schemas import Intent, IntentClassification, PolicyAnswer, RetrievedChunk, Sentiment
@@ -120,6 +121,12 @@ def test_history_leaves_out_tool_steps_and_keeps_only_recent_messages():
 def order_turn(i: int) -> list:
     call = {"name": "get_order_status", "args": {"order_id": "1042"}, "id": f"call_{i}"}
     return [HumanMessage(f"question {i}"), AIMessage("", tool_calls=[call]), ToolMessage("shipped", tool_call_id=f"call_{i}"), AIMessage(f"answer {i}")]
+
+
+def test_current_turn_without_a_customer_message_is_everything():
+    messages = [AIMessage("Hello")]
+
+    assert current_turn(messages) == messages
 
 
 def test_short_conversation_is_not_trimmed():

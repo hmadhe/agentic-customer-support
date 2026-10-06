@@ -31,8 +31,18 @@ def test_order_status_only_mentions_facts_that_exist(tools):
     assert "Tracking" not in text
 
 
+def test_delivered_order_status_includes_the_delivery_date(tools):
+    # Found by the coverage report: no test covered a delivered order's status text.
+    text = tools["status"].invoke({"order_id": "1001"})
+
+    assert text.startswith("Order 1001: Lenovo ThinkPad X1 laptop. Status: delivered.")
+    assert "Delivered on " in text and "Tracking number: VC100100." in text
+
+
 def test_unknown_order_gives_a_clear_message(tools):
     assert tools["status"].invoke({"order_id": "9999"}) == "No order found with number 9999."
+    # Found by the coverage report: the eligibility tool's unknown-order path was untested.
+    assert tools["eligibility"].invoke({"order_id": "9999"}) == "No order found with number 9999."
 
 
 def test_non_numeric_order_id_is_rejected(tools):

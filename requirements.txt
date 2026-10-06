@@ -9,3 +9,4 @@ fastapi==0.142.2
 uvicorn==0.54.0
 httpx==0.28.1
 langgraph-checkpoint-sqlite==3.1.1
+pytest-cov==7.1.0
