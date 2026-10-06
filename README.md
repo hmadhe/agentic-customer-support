@@ -44,16 +44,16 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 
 | Technology | Role in this project | Status |
 |---|---|---|
-| **Python 3.11** | Language | âœ… In use |
-| **Ollama + `qwen2.5:3b`** | Runs the chat LLM locally on the CPU, free and offline | âœ… In use |
-| **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search | âœ… In use |
-| **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | âœ… In use (chat model, prompts, structured output, text splitters, embeddings, Chroma wrapper) |
-| **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | âœ… In use (settings, LLM output schemas, graph state, retrieved chunks) |
-| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | âœ… In use (conditional routing, agent â‡„ tools loop with `ToolNode`) |
-| **Chroma** | Local vector store for document search (RAG), saved to disk | âœ… In use |
-| **pytest** | Automated tests | âœ… In use |
-| **SQLite** | Mock order database and support tickets | âœ… In use |
-| **FastAPI + uvicorn** | HTTP API that exposes the assistant; Swagger UI at `/docs` as the demo | âœ… In use |
+| **Python 3.11** | Language | ✅ In use |
+| **Ollama + `qwen2.5:3b`** | Runs the chat LLM locally on the CPU, free and offline | ✅ In use |
+| **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search | ✅ In use |
+| **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model, prompts, structured output, text splitters, embeddings, Chroma wrapper) |
+| **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings, LLM output schemas, graph state, retrieved chunks) |
+| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (conditional routing, agent ⇄ tools loop with `ToolNode`) |
+| **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
+| **pytest** | Automated tests | ✅ In use |
+| **SQLite** | Mock order database and support tickets | ✅ In use |
+| **FastAPI + uvicorn** | HTTP API that exposes the assistant; Swagger UI at `/docs` as the demo | ✅ In use |
 
 ---
 
@@ -63,24 +63,24 @@ The target design is below. **Most of it is not built yet.** Each milestone adds
 
 ```
    Client (curl / Swagger UI / CLI)
-                 â”‚
-                 â–¼
-   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-   â”‚ FastAPI                      â”‚  POST /chat, GET /tickets
-   â”‚ (Pydantic request/response)  â”‚
-   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
-                  â–¼
-   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
-   â”‚ LangGraph support workflow   â”‚â—„â”€â”€ Checkpointer (conversation memory)
-   â””â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”˜
-      â”‚          â”‚          â”‚
-      â–¼          â–¼          â–¼
-   LLM via    Retriever   Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â–º Order database (SQLite)
-   LangChain     â”‚          â”‚
-   (Ollama)      â–¼          â””â”€ create_ticket â–º Tickets (SQLite)
+                 │
+                 ▼
+   ┌──────────────────────────────┐
+   │ FastAPI                      │  POST /chat, GET /tickets
+   │ (Pydantic request/response)  │
+   └──────────────┬───────────────┘
+                  ▼
+   ┌──────────────────────────────┐
+   │ LangGraph support workflow   │◄── Checkpointer (conversation memory)
+   └──┬──────────┬──────────┬─────┘
+      │          │          │
+      ▼          ▼          ▼
+   LLM via    Retriever   Tools ─────────► Order database (SQLite)
+   LangChain     │          │
+   (Ollama)      ▼          └─ create_ticket ► Tickets (SQLite)
           Vector store (Chroma)
-                 â–²
-          Ingest script â—„â”€â”€ VoltCart policy documents (markdown)
+                 ▲
+          Ingest script ◄── VoltCart policy documents (markdown)
 ```
 
 ### Planned LangGraph workflow
@@ -106,7 +106,7 @@ The graph grows in stages. **The current graph (Milestone 5):**
 
 ```mermaid
 flowchart LR
-    START([START]) --> C[classify_intent<br/>LLM â†’ IntentClassification]
+    START([START]) --> C[classify_intent<br/>LLM → IntentClassification]
     C -->|human_request<br/>or angry| E[escalate<br/>create ticket]
     C -->|policy_question| R[retrieve<br/>top 4 policy chunks]
     R --> A[answer<br/>PolicyAnswer with sources]
@@ -146,53 +146,53 @@ flowchart LR
 
 ```
 agentic-customer-support/
-â”œâ”€â”€ app/                  # Application code (the importable Python package)
-â”‚   â”œâ”€â”€ __init__.py       # Marks app/ as a package so `from app... import` works
-â”‚   â”œâ”€â”€ config.py         # Settings: reads .env and validates it with Pydantic
-â”‚   â”œâ”€â”€ llm.py            # get_llm(): the single place where the LLM is created
-â”‚   â”œâ”€â”€ schemas.py        # Pydantic models: IntentClassification, RetrievedChunk, PolicyAnswer
-â”‚   â”œâ”€â”€ classifier.py     # Prompt + LLM that turns a message into an IntentClassification
-â”‚   â”œâ”€â”€ graph.py          # LangGraph workflow: state, nodes, routing and build_graph()
-â”‚   â”œâ”€â”€ vector_store.py   # Embedding model + Chroma collection, shared by ingestion and retrieval
-â”‚   â”œâ”€â”€ ingest.py         # Load policy docs â†’ split into chunks â†’ embed â†’ store
-â”‚   â”œâ”€â”€ retriever.py      # Question â†’ most relevant chunks with source and section
-â”‚   â”œâ”€â”€ answer.py         # Question + chunks â†’ answer with sources, "insufficient information", or AnswerGenerationError
-â”‚   â”œâ”€â”€ orders.py         # SQLite order database + return-eligibility rules (pure Python)
-â”‚   â”œâ”€â”€ tools.py          # LangChain tools the agent can call, with Pydantic-validated inputs
-â”‚   â”œâ”€â”€ agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
-â”‚   â”œâ”€â”€ tickets.py        # Support tickets (SQLite), escalation reasons and the replies for each
-â”‚   â”œâ”€â”€ memory.py         # Checkpointer (in memory or SQLite), conversation history, history trimming
-â”‚   â””â”€â”€ api.py            # FastAPI app: /chat, /tickets, /health
-â”œâ”€â”€ data/
-â”‚   â””â”€â”€ policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
-â”œâ”€â”€ scripts/
-â”‚   â”œâ”€â”€ hello_llm.py      # Smoke test: makes one real call to the LLM
-â”‚   â”œâ”€â”€ chat.py           # Command-line chat: type a message, see intent and reply
-â”‚   â”œâ”€â”€ ingest.py         # Builds the vector store from data/policies/
-â”‚   â”œâ”€â”€ seed_orders.py    # Creates the mock order database data/voltcart.db
-â”‚   â”œâ”€â”€ tickets.py        # Lists the support tickets created by escalations
-â”‚   â””â”€â”€ ask.py            # Ask a policy question; shows retrieved chunks and the answer
-â”œâ”€â”€ tests/
-â”‚   â”œâ”€â”€ conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store and order DB
-â”‚   â”œâ”€â”€ test_llm.py              # Unit test: the LLM is configured from settings
-â”‚   â”œâ”€â”€ test_graph.py            # Unit tests: every route, the agent loop and its safeguards (scripted fake agent)
-â”‚   â”œâ”€â”€ test_orders.py           # Unit tests: order database and return-eligibility rules
-â”‚   â”œâ”€â”€ test_tools.py            # Unit tests: tool inputs and outputs, invented-order-ID detection
-â”‚   â”œâ”€â”€ test_tickets.py          # Unit tests: creating and listing tickets, schema migration
-â”‚   â”œâ”€â”€ test_memory.py           # Unit tests: multi-turn conversations, per-turn reset, trimming, restart
-â”‚   â”œâ”€â”€ test_api.py              # Unit tests: every endpoint, errors, concurrency, startup failure (fake graph)
-â”‚   â”œâ”€â”€ test_api_llm.py          # Real-model test: a policy question through the API (-m llm)
-â”‚   â”œâ”€â”€ test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
-â”‚   â”œâ”€â”€ test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
-â”‚   â”œâ”€â”€ test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
-â”‚   â”œâ”€â”€ test_classifier_llm.py   # Real-model tests: classification accuracy (run with -m llm)
-â”‚   â”œâ”€â”€ test_rag_llm.py          # Real-model tests: retrieval and answers on the real documents (-m llm)
-â”‚   â””â”€â”€ test_graph_llm.py        # Real-model tests: whole graph end to end (-m llm)
-â”œâ”€â”€ .env.example          # Template for your local .env (committed to git)
-â”œâ”€â”€ .gitignore            # Keeps .env, .venv/ and caches out of git
-â”œâ”€â”€ pytest.ini            # pytest configuration
-â”œâ”€â”€ requirements.txt      # Pinned Python dependencies
-â””â”€â”€ README.md             # This file
+├── app/                  # Application code (the importable Python package)
+│   ├── __init__.py       # Marks app/ as a package so `from app... import` works
+│   ├── config.py         # Settings: reads .env and validates it with Pydantic
+│   ├── llm.py            # get_llm(): the single place where the LLM is created
+│   ├── schemas.py        # Pydantic models: IntentClassification, RetrievedChunk, PolicyAnswer
+│   ├── classifier.py     # Prompt + LLM that turns a message into an IntentClassification
+│   ├── graph.py          # LangGraph workflow: state, nodes, routing and build_graph()
+│   ├── vector_store.py   # Embedding model + Chroma collection, shared by ingestion and retrieval
+│   ├── ingest.py         # Load policy docs → split into chunks → embed → store
+│   ├── retriever.py      # Question → most relevant chunks with source and section
+│   ├── answer.py         # Question + chunks → answer with sources, "insufficient information", or AnswerGenerationError
+│   ├── orders.py         # SQLite order database + return-eligibility rules (pure Python)
+│   ├── tools.py          # LangChain tools the agent can call, with Pydantic-validated inputs
+│   ├── agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
+│   ├── tickets.py        # Support tickets (SQLite), escalation reasons and the replies for each
+│   ├── memory.py         # Checkpointer (in memory or SQLite), conversation history, history trimming
+│   └── api.py            # FastAPI app: /chat, /tickets, /health
+├── data/
+│   └── policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
+├── scripts/
+│   ├── hello_llm.py      # Smoke test: makes one real call to the LLM
+│   ├── chat.py           # Command-line chat: type a message, see intent and reply
+│   ├── ingest.py         # Builds the vector store from data/policies/
+│   ├── seed_orders.py    # Creates the mock order database data/voltcart.db
+│   ├── tickets.py        # Lists the support tickets created by escalations
+│   └── ask.py            # Ask a policy question; shows retrieved chunks and the answer
+├── tests/
+│   ├── conftest.py              # Shared fixtures: blocks real model calls in unit tests; test vector store and order DB
+│   ├── test_llm.py              # Unit test: the LLM is configured from settings
+│   ├── test_graph.py            # Unit tests: every route, the agent loop and its safeguards (scripted fake agent)
+│   ├── test_orders.py           # Unit tests: order database and return-eligibility rules
+│   ├── test_tools.py            # Unit tests: tool inputs and outputs, invented-order-ID detection
+│   ├── test_tickets.py          # Unit tests: creating and listing tickets, schema migration
+│   ├── test_memory.py           # Unit tests: multi-turn conversations, per-turn reset, trimming, restart
+│   ├── test_api.py              # Unit tests: every endpoint, errors, concurrency, startup failure (fake graph)
+│   ├── test_api_llm.py          # Real-model test: a policy question through the API (-m llm)
+│   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
+│   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
+│   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
+│   ├── test_classifier_llm.py   # Real-model tests: classification accuracy (run with -m llm)
+│   ├── test_rag_llm.py          # Real-model tests: retrieval and answers on the real documents (-m llm)
+│   └── test_graph_llm.py        # Real-model tests: whole graph end to end (-m llm)
+├── .env.example          # Template for your local .env (committed to git)
+├── .gitignore            # Keeps .env, .venv/ and caches out of git
+├── pytest.ini            # pytest configuration
+├── requirements.txt      # Pinned Python dependencies
+└── README.md             # This file
 ```
 
 These files are created locally and **never committed**:
@@ -356,7 +356,7 @@ Bot: You can return your order 1001 within the 15-day return window until 2026-1
 
 "It" was resolved from the previous turn. Follow-ups that refer to a *policy* topic only with "it" (for example "And how long does it take?" after a shipping question) don't work yet; see the [Milestone 6 log](#milestone-6-conversation-memory-).
 
-The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. **Order questions are handled by the agent**, with the tools it called shown underneath. **Escalations** show their reason. On this 8 GB machine an answer takes about 15â€“30 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
+The first bracket line shows how the LLM classified the message. **Policy questions are answered from the documents**, with the sources shown underneath. **Order questions are handled by the agent**, with the tools it called shown underneath. **Escalations** show their reason. On this 8 GB machine an answer takes about 15–30 seconds; see the [Milestone 3 log](#milestone-3-routing-policy-questions-to-rag-) for why.
 
 To see the tickets that escalations created:
 
@@ -437,7 +437,7 @@ A real response:
  "escalated":false,"escalation_reason":null,"ticket_id":null}
 ```
 
-**To continue the conversation, send the same `thread_id` back:** `{"message": "Can I return it?", "thread_id": "a9e8d41d-â€¦"}`.
+**To continue the conversation, send the same `thread_id` back:** `{"message": "Can I return it?", "thread_id": "a9e8d41d-…"}`.
 
 | Endpoint | What it does |
 |---|---|
@@ -447,7 +447,7 @@ A real response:
 | `GET /health` | `{"status": "ok"}` once the server has started |
 
 - **The server refuses to start** if the order database or the vector store is missing, and tells you which script to run.
-- **Allow time:** the first request after Ollama starts can take more than a minute (models loading), and later ones take 15â€“30 s on this machine. Set your HTTP client's timeout accordingly.
+- **Allow time:** the first request after Ollama starts can take more than a minute (models loading), and later ones take 15–30 s on this machine. Set your HTTP client's timeout accordingly.
 
 ---
 
@@ -504,11 +504,11 @@ It makes one real request to the model, then prints the reply, the time it took 
 
 Because `intent` is an enum, the rest of the code can rely on it being one of exactly five values. Routing never has to handle free text like *"I think this is about shipping"*.
 
-**`negative` and `angry` are deliberately separate** (since Milestone 5). Only `angry` (hostile, shouting, "NOW", "nobody answers me") is escalated. A merely unhappy customer ("a little disappointedâ€¦ can I return it?") still gets the bot's help, because the bot can answer those.
+**`negative` and `angry` are deliberately separate** (since Milestone 5). Only `angry` (hostile, shouting, "NOW", "nobody answers me") is escalated. A merely unhappy customer ("a little disappointed… can I return it?") still gets the bot's help, because the bot can answer those.
 
 There is deliberately **no `confidence` field**. A small model's self-reported confidence (for example, "0.92") is not calibrated: it's a number the model makes up, so routing on it would look smart but be unreliable.
 
-### `app/classifier.py`: message â†’ classification
+### `app/classifier.py`: message → classification
 
 The classifier is a LangChain chain: `prompt | llm.with_structured_output(IntentClassification)`.
 
@@ -547,8 +547,8 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 - **SQLite** file `data/voltcart.db` with one `orders` table: product, category, status, dates, `opened`, `final_sale`, total and tracking number. `seed_db()` recreates it with 12 orders whose dates are relative to today.
 - **`get_order()`** opens the database **read-only**. A normal `sqlite3.connect()` silently creates an empty file when the database is missing, which turned "you forgot to seed" into a confusing "no such table" error.
 - **`check_return_eligibility(order, today)`** applies `returns.md` **in Python**:
-  - not delivered yet â†’ no
-  - gift card, final-sale item, or opened earbuds â†’ no
+  - not delivered yet → no
+  - gift card, final-sale item, or opened earbuds → no
   - otherwise a 15-day window (opened laptop, tablet or phone) or a 30-day window, plus a 15% restocking fee for opened laptops, cameras and drones
 
   `today` is a parameter, so tests can fix the date.
@@ -559,8 +559,8 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 
 | Tool | Input | Returns |
 |---|---|---|
-| `get_order_status` | `order_id` | "Order 1042: Bose QuietComfort headphones. Status: shipped. Ordered on â€¦. Tracking number: VC104200." |
-| `check_return_eligibility` | `order_id` | "Order 1001 can be returned until 2026-10-10. â€¦ A 15% restocking fee applies." or "Order 1004 cannot be returned. Reason: â€¦" |
+| `get_order_status` | `order_id` | "Order 1042: Bose QuietComfort headphones. Status: shipped. Ordered on …. Tracking number: VC104200." |
+| `check_return_eligibility` | `order_id` | "Order 1001 can be returned until 2026-10-10. … A 15% restocking fee applies." or "Order 1004 cannot be returned. Reason: …" |
 | `search_policies` | `query` | The top **2** policy chunks, each labelled with its source file |
 
 - **Inputs are validated by Pydantic** (`OrderLookup`): a leading `#` is removed and non-digits are rejected, so `ORD-12` never reaches the database. An unknown number returns "No order found with number 9999." rather than an error.
@@ -569,7 +569,7 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 
 ### `app/agent.py`: the agent and its safeguards
 
-- **`AGENT_PROMPT`** says to use the tools for facts, never guess, ask for a missing order number, and answer in 1â€“3 sentences.
+- **`AGENT_PROMPT`** says to use the tools for facts, never guess, ask for a missing order number, and answer in 1–3 sentences.
 - **`build_agent(tools)`** is `llm.bind_tools(tools)`. The chat model now sees the tool schemas and can reply with tool calls.
 - **Three safeguards in code** don't rely on the model obeying the prompt:
   1. **Invented order IDs:** before any tool runs, `invented_order_ids()` checks that every requested `order_id` appears in **something the customer wrote in this conversation**. If one doesn't, nothing is looked up and the customer is asked for their order number. This was added because qwen invented `123456` despite the prompt. Since Milestone 6 earlier messages count too, so "Can I return it?" after "Where is my order 1001?" works.
@@ -590,7 +590,7 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
   | `agent_gave_up` | The order agent used up its 3 tool rounds |
   | `tool_error` | A tool crashed (for example, Ollama unavailable during `search_policies`) |
 
-- **Each reason has its own reply**, for example: "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #4)â€¦"
+- **Each reason has its own reply**, for example: "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #4)…"
 - **The rule: never promise a human without a ticket.** If saving fails, the customer is told something went wrong and to try again.
 - **Schema migration:** databases created before Milestone 6 have no `conversation` column, and `CREATE TABLE IF NOT EXISTS` never changes an existing table. `_connect()` adds the column if it's missing, so old tickets are kept and new ones save normally.
 
@@ -600,7 +600,7 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
   - **without a path** (the CLI chat and the tests), LangGraph's `InMemorySaver`, which is lost when the program stops
   - **with a path** (the API, `data/conversations.db`), LangGraph's `SqliteSaver`, which **survives a restart**. Its connection uses `check_same_thread=False` because FastAPI handles requests on several threads; `SqliteSaver` has its own lock.
 
-  Both register our own state types (`Intent`, `Ticket`, â€¦) with the serializer. Without that, every turn logged "Deserializing unregistered type â€¦ will be blocked in a future version".
+  Both register our own state types (`Intent`, `Ticket`, …) with the serializer. Without that, every turn logged "Deserializing unregistered type … will be blocked in a future version".
 - **`format_history(messages)`** turns the last few customer and assistant messages into plain text, leaving out tool steps. It's used for the classifier's context (6 messages) and for tickets (10).
 - **`recent_messages(messages)`** decides what the **agent** sees: the current turn in full, plus at most **20 earlier messages**, always starting at a customer message.
 
@@ -613,7 +613,7 @@ A loop that reads a message, runs the graph and prints the classification, the r
 ### `app/api.py`: the HTTP API
 
 - **`create_app(graph_factory, tickets_db_path)`** builds the FastAPI app. The graph is built **once, at startup**, in FastAPI's `lifespan` hook, so a missing database or empty vector store stops the server *before* it accepts requests. Tests pass a factory that builds a graph from fakes.
-- **Pydantic request and response models.** `ChatRequest` checks the message (1â€“2,000 characters; otherwise `422`). `ChatResponse` tells a client everything about the turn: reply, intent, sentiment, order number, sources, tools used, and any escalation and ticket number. The same models generate the Swagger documentation.
+- **Pydantic request and response models.** `ChatRequest` checks the message (1–2,000 characters; otherwise `422`). `ChatResponse` tells a client everything about the turn: reply, intent, sentiment, order number, sources, tools used, and any escalation and ticket number. The same models generate the Swagger documentation.
 - **`/chat` is a plain `def`, deliberately not `async def`.** The graph makes blocking calls (Ollama over HTTP, SQLite). Measured on a real uvicorn server with a 3-second fake graph:
 
   | `/chat` defined as | `/health` while 2 chats run | 2 simultaneous chats |
@@ -650,7 +650,7 @@ An LLM on its own doesn't know VoltCart's policies, so it would invent them. **R
 ### `app/ingest.py`: how ingestion works
 
 1. **Load:** read every `.md` file in `data/policies/` and tag it with its file name (`source`).
-2. **Split:** use `MarkdownHeaderTextSplitter` to make **one chunk per `##` section**. Each chunk's text starts with `<document title> > <section>`, for example `VoltCart Returns and Refunds Policy > Restocking fee`, and its metadata holds `source` and `section`. A section longer than 500 characters would be split again with 50 characters of overlap. None of ours is: the 31 chunks are 96â€“386 characters.
+2. **Split:** use `MarkdownHeaderTextSplitter` to make **one chunk per `##` section**. Each chunk's text starts with `<document title> > <section>`, for example `VoltCart Returns and Refunds Policy > Restocking fee`, and its metadata holds `source` and `section`. A section longer than 500 characters would be split again with 50 characters of overlap. None of ours is: the 31 chunks are 96–386 characters.
 3. **Reset:** empty the Chroma collection, so running ingestion again never creates duplicates and chunks from deleted documents disappear.
 4. **Embed and store:** `add_documents` embeds every chunk and saves it with its metadata.
 
@@ -689,7 +689,7 @@ There are two kinds of tests:
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
 | **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py` | No (fakes) | About 6 seconds | `python -m pytest` | 94 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 7â€“8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing intermittently** (see below) |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 7–8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing intermittently** (see below) |
 
 > **Known flaky test:** `test_damaged_item_question_uses_the_policy_tool` passes when run alone (6 of 6) but failed 2 of 2 times when run after the other tests in Milestone 7. The agent then calls `get_order_status` instead of `search_policies`, and the customer misses the 48-hour damage rule. It's left strict on purpose; see the [Milestone 7 log](#milestone-7-http-api-with-fastapi-).
 
@@ -772,7 +772,7 @@ Each problem below was hit or reproduced during development.
 | On a follow-up, the bot answers the *previous* question again, or escalates a question it answered | Per-turn state leaking into the next turn (fixed in Milestone 6) | If you add a per-turn field to `SupportState`, also add it to `NEW_TURN` |
 | `RuntimeError: The policy vector store is empty. Build it with: python -m scripts.ingest` on startup | Ingestion was never run (or `chroma_db/` was deleted) | Run `python -m scripts.ingest` |
 | `/chat` returns `503 The language model is unavailable` | Ollama isn't running or isn't reachable | Start Ollama, then retry |
-| The HTTP client times out on `/chat` | Answers take 15â€“30 s on a CPU, and over a minute while Ollama loads the models | Use a client timeout of at least 2 minutes |
+| The HTTP client times out on `/chat` | Answers take 15–30 s on a CPU, and over a minute while Ollama loads the models | Use a client timeout of at least 2 minutes |
 | All requests become slow while one `/chat` runs | Someone changed `/chat` to `async def`, so blocking code froze the event loop | Keep `/chat` a plain `def` (see `app/api.py`) |
 | A conversation continued after restarting the server has no memory of earlier turns | The `thread_id` wasn't sent back, or `data/conversations.db` was deleted | Send the `thread_id` from the previous response |
 | "And how long does it take?" after a shipping question asks for an order number | qwen classifies pronoun-only follow-ups as order questions, even with context | Ask the full question ("How long does express shipping take?") |
@@ -783,7 +783,7 @@ Each problem below was hit or reproduced during development.
 | A unit test fails with `ConnectionError` | The test is calling a real model. The `conftest.py` safety net blocks that outside `llm` tests | Pass fakes into `build_graph(...)`, or mark the test `@pytest.mark.llm` |
 | Speed varies wildly (the same step takes 0.3 s once and 13 s the next time) | The machine is short of RAM and is paging memory to disk. On an 8 GB machine the two models plus VS Code and a browser don't fit | Close Chrome and other heavy apps while running the assistant |
 | A test of a sentiment label passes on one run and fails on the next | Temperature 0 is not fully deterministic here, and borderline messages flip between `angry` and `negative` | Test clear examples for labels, and test the **decision** (for example `needs_human_now`) for borderline ones |
-| The bot replies "something went wrongâ€¦ couldn't pass this to our support team" | Saving the ticket failed (for example, `data/` isn't writable) | Check that `data/tickets.db` can be created and written |
+| The bot replies "something went wrong… couldn't pass this to our support team" | Saving the ticket failed (for example, `data/` isn't writable) | Check that `data/tickets.db` can be created and written |
 | A question takes about a minute and ends in an escalation (or, from `scripts.ask`, a model error) | qwen fell into a **runaway generation** and was cut off at `MAX_OUTPUT_TOKENS`, so its output couldn't be parsed | Expected occasionally with this small model. Before the cap, one runaway took 8 minutes |
 
 ---
@@ -792,9 +792,9 @@ Each problem below was hit or reproduced during development.
 
 Every milestone follows the same cycle:
 
-**Plan â†’ Implement a small feature â†’ Run â†’ Test â†’ Debug â†’ Fix â†’ Review â†’ Identify missing pieces â†’ Next milestone**
+**Plan → Implement a small feature → Run → Test → Debug → Fix → Review → Identify missing pieces → Next milestone**
 
-### Milestone 0: setup and first LLM call âœ…
+### Milestone 0: setup and first LLM call ✅
 
 **Goal:** prove that the whole toolchain works before writing any assistant logic.
 
@@ -817,20 +817,20 @@ Every milestone follows the same cycle:
 - **The context window is 4096 tokens by default.** RAG chunks and chat history will have to fit inside it, though it can be raised later.
 - **Ollama must be running** before the app is started.
 
-### Milestone 1: intent classifier and first LangGraph graph âœ…
+### Milestone 1: intent classifier and first LangGraph graph ✅
 
 **Goal:** turn a customer message into a validated, structured classification and route it through a LangGraph workflow.
 
 **Built:**
 - Pydantic schemas: the `Intent` and `Sentiment` enums and the `IntentClassification` model
 - A classifier: a prompt plus `with_structured_output`, using Ollama's constrained decoding
-- The first LangGraph graph, `START â†’ classify_intent â†’ respond â†’ END`, with a Pydantic state
+- The first LangGraph graph, `START → classify_intent → respond → END`, with a Pydantic state
 - A command-line chat (`python -m scripts.chat`)
 - 7 new unit tests using a fake classifier, and 16 real-model tests that only run with `-m llm`
 
 **Problems hit and how they were fixed:**
 1. **Off-topic questions were classified as `greeting`.** "What's the capital of France?", "What's the weather tomorrow?" and "Write me a poem" all became `greeting`. Probing 5 off-topic messages showed a pattern (3 of 5 wrong), not a one-off. **Cause:** `greeting` was defined as "a greeting *or small talk*", and casual questions count as small talk. **Fix:** narrowed `greeting` to "ONLY hi, thanks or bye", gave `out_of_scope` concrete examples, and added the rule "a message with a question or request is never a greeting". Result: 5 of 5 correct.
-2. **General shipping questions were classified as `order_issue`.** "How long does shipping take?" failed in the new tests, and 4 of 5 similar questions failed the same way (the same answer 3 out of 3 times, so it wasn't random). **Cause:** `order_issue` mentioned "delivery" and `policy_question` mentioned "shipping", so the small model matched on keywords. The real deciding question, "does the customer refer to *their own* order?", was only implied. **Fix:** said it explicitly ("THEIR OWN order: an order number, 'my order', 'my package'â€¦") and added it as a rule. Result: 8 of 8 correct, including "My package still hasn't arrived" (no order number).
+2. **General shipping questions were classified as `order_issue`.** "How long does shipping take?" failed in the new tests, and 4 of 5 similar questions failed the same way (the same answer 3 out of 3 times, so it wasn't random). **Cause:** `order_issue` mentioned "delivery" and `policy_question` mentioned "shipping", so the small model matched on keywords. The real deciding question, "does the customer refer to *their own* order?", was only implied. **Fix:** said it explicitly ("THEIR OWN order: an order number, 'my order', 'my package'…") and added it as a rule. Result: 8 of 8 correct, including "My package still hasn't arrived" (no order number).
 3. **The expected invalid-output errors never happened.** I'd predicted the 3B model would sometimes return invalid intents or broken JSON. Investigating why it didn't showed that `with_structured_output` passes the schema to Ollama, which restricts generation to valid output. **Lesson:** with this setup, failures are about meaning (a valid but wrong intent), not structure.
 
 **What we learned:** both real bugs were **prompt ambiguity**, not code bugs. The method that worked: notice one failure, probe similar messages to find the pattern, fix the definition, then re-run *every* real-model test, because a prompt change can break other cases.
@@ -843,7 +843,7 @@ Every milestone follows the same cycle:
 - **Each message is classified on its own.** There's no memory of earlier messages until Milestone 6.
 - **About 4 seconds per message** on the CPU.
 
-### Milestone 2: standalone RAG pipeline âœ…
+### Milestone 2: standalone RAG pipeline ✅
 
 **Goal:** answer VoltCart policy questions from our own documents, citing the source and refusing when the documents don't contain the answer. It is built and tested on its own and is not yet connected to the graph.
 
@@ -856,7 +856,7 @@ Every milestone follows the same cycle:
 
 **Investigations, with the actual numbers:**
 
-1. **Chunk size and overlap.** The first version used 500-character chunks with 50 characters of overlap and produced 19 chunks. Inspecting them showed headings stranded at the end of a chunk with none of their text, the overlap mostly copying those stranded headings, and chunks mixing two topics. I switched to **one chunk per section** (31 chunks, 96â€“386 characters).
+1. **Chunk size and overlap.** The first version used 500-character chunks with 50 characters of overlap and produced 19 chunks. Inspecting them showed headings stranded at the end of a chunk with none of their text, the overlap mostly copying those stranded headings, and chunks mixing two topics. I switched to **one chunk per section** (31 chunks, 96–386 characters).
    On 15 test questions, **the retrieval ranking did not change**: 14 of 15 put the right document first both before and after. The change is kept for the *answer* step, because each chunk is now one complete topic with its section name. I'm not claiming it improved retrieval.
 
 2. **Duplicates on re-ingestion.** Running ingestion twice took the collection from 19 to **38 chunks**. Asking "What is the restocking fee for a laptop?" then returned **only 2 unique chunks out of 4**: half the context was wasted on copies. **Fix:** empty the collection before each ingestion (`reset_collection`). After the fix, two runs still give 31 chunks. I chose this over stable IDs plus updating in place because updating in place would leave stale chunks behind when a document gets shorter.
@@ -865,19 +865,19 @@ Every milestone follows the same cycle:
 
    | Question type | Top relevance score (before prefixes) |
    |---|---|
-   | Answerable (15 questions) | 0.575 â€“ 0.830 |
-   | Unanswerable ("price matching", "student discount", "store pickup") | 0.501 â€“ 0.535 |
+   | Answerable (15 questions) | 0.575 – 0.830 |
+   | Unanswerable ("price matching", "student discount", "store pickup") | 0.501 – 0.535 |
 
    The gap is only about 0.04, so a score cutoff would be fragile. Instead, the **answer step** must recognise unhelpful context, and in all 3 unanswerable test questions it did.
 
-4. **Context window.** I measured the real answer prompt (system prompt plus 4 chunks plus the question) on all 18 questions with Ollama's own token count: **298â€“392 input tokens, at most about 10% of the 4096-token window.** Plenty of room.
+4. **Context window.** I measured the real answer prompt (system prompt plus 4 chunks plus the question) on all 18 questions with Ollama's own token count: **298–392 input tokens, at most about 10% of the 4096-token window.** Plenty of room.
 
 **Problems hit and how they were fixed:**
 
 1. **A retrieval miss hidden by the metric.** "My laptop stopped working after 6 months" had `warranty.md` in the top 4, so a document-level check passed. But the section that actually answers it, **"Manufacturer warranty", wasn't in the top 4 at all**; the warranty chunks there were "Protection Plan" and "Refurbished products". "Return window" ranked first because it shares the word "laptop".
    **Fix:** the `nomic-embed-text` model card says to use the task prefixes `search_document:` and `search_query:`, and we weren't. With them, "Manufacturer warranty" ranks **2nd**. The top-ranked result is still "Return window", now a known limitation (see below). Retrieval tests now check the **section**, not just the document.
 2. **Answers with no sources.** 3 of 4 answered questions came back with `sources=[]`. I checked the model's raw output: it really was returning an empty list, so my filter wasn't the cause. The real cause: `sources` had a default value, which made it **optional** in the JSON schema sent to Ollama, and the model took the shortest valid output. **Fix:** made `sources` a required field. Result: all 4 cite the right document.
-3. **Runaway generation.** One answer generated **3,544 tokens and took 8 minutes 16 seconds** (a normal answer is about 50â€“100 tokens). It happened again on a later run (3,318 tokens). Nothing stopped it, because Ollama's default output limit is unlimited.
+3. **Runaway generation.** One answer generated **3,544 tokens and took 8 minutes 16 seconds** (a normal answer is about 50–100 tokens). It happened again on a later run (3,318 tokens). Nothing stopped it, because Ollama's default output limit is unlimited.
    **Fix:** `MAX_OUTPUT_TOKENS=512`, plus treating unparseable output as "insufficient information" instead of crashing.
    **Still unexplained:** it's intermittent. The same question ran normally 5 times in a row in isolation, and only ran away after other questions in the same process. Ollama's log shows it reusing cached prompt tokens from the previous request, which is a plausible cause, but I haven't proven it. It also shows that **temperature 0 is not fully deterministic** here.
 4. **A hallucination from mixing two chunks (not fixed).** For "My laptop stopped working after 6 months", qwen answers *"VoltCart will handle the repair or replacement for free"*. **That's false:** the policy says *"The manufacturer handles these repairs."* The "repair or replace for free" wording comes from the separately retrieved "Refurbished products" chunk. It happens on every run. Three fixes were tried and measured:
@@ -908,7 +908,7 @@ Every milestone follows the same cycle:
 - **The test sample is small** (11 retrieval and 6 answer questions, written by hand), and answer tests check for one key fact, not the full text.
 - **Not connected to the graph yet.** That's Milestone 3.
 
-### Milestone 3: routing policy questions to RAG âœ…
+### Milestone 3: routing policy questions to RAG ✅
 
 **Goal:** connect the Milestone 2 RAG pipeline to the LangGraph workflow with conditional routing, without changing the RAG code.
 
@@ -927,17 +927,17 @@ Every milestone follows the same cycle:
 | Do gift cards expire? | policy_question | RAG | "VoltCart gift cards never expire." (`payments.md`) |
 | Do you offer price matching? | policy_question | RAG | "insufficient information" reply |
 | How long do I have to return an opened laptop? | policy_question | RAG | "Opened laptops can be returned within 15 days of delivery." (`returns.md`) |
-| Where is my order #1042? | order_issue | placeholder | âœ… correct for now |
-| Hi there! | greeting | placeholder | âœ… |
-| What's the capital of France? | out_of_scope | placeholder | âœ… |
-| Can I return the laptop I bought last week? | order_issue | placeholder | âš ï¸ the answer is in the policies, but RAG is skipped |
-| My headphones arrived broken, what can I do? | order_issue | placeholder | âš ï¸ the same gap |
+| Where is my order #1042? | order_issue | placeholder | ✅ correct for now |
+| Hi there! | greeting | placeholder | ✅ |
+| What's the capital of France? | out_of_scope | placeholder | ✅ |
+| Can I return the laptop I bought last week? | order_issue | placeholder | ⚠️ the answer is in the policies, but RAG is skipped |
+| My headphones arrived broken, what can I do? | order_issue | placeholder | ⚠️ the same gap |
 
 **Problems hit and how they were fixed:**
 1. **A design gap: own-purchase questions skip RAG.** The last two rows are classified **correctly** under Milestone 1's rules (they're about the customer's own purchase), but the answer they need, the return window or the damaged-item procedure, is in the policies. The intents mix up "about my order" with "needs order data". **Not patched in the classifier**, because the classification is right. **Planned fix (Milestone 4):** give the order-handling agent a `search_policies` tool, so it can combine order data with policy. It's recorded as an `xfail` test until then.
-2. **"Fast" unit tests silently called real models.** After the change, the unit suite took **58 seconds** instead of 5. The old graph tests passed only a fake *classifier*, so `build_graph()` created the **real** retriever and answer chain, and the `policy_question` case called Ollama for real. **Fix:** every unit test now passes fakes for all three dependencies, and a `conftest.py` safety net points Ollama at a closed port for non-`llm` tests. I proved the safety net with a throwaway test that builds the graph without fakes: it failed in 5.7 s with `ConnectionError`. The suite now takes 3.5â€“10 s.
+2. **"Fast" unit tests silently called real models.** After the change, the unit suite took **58 seconds** instead of 5. The old graph tests passed only a fake *classifier*, so `build_graph()` created the **real** retriever and answer chain, and the `policy_question` case called Ollama for real. **Fix:** every unit test now passes fakes for all three dependencies, and a `conftest.py` safety net points Ollama at a closed port for non-`llm` tests. I proved the safety net with a throwaway test that builds the graph without fakes: it failed in 5.7 s with `ConnectionError`. The suite now takes 3.5–10 s.
 3. **`KeyError: 'chunks'` in my new test.** `graph.invoke()` only returns fields a node actually wrote; Pydantic defaults don't appear. The graph was fine; the test's assumption was wrong. **Fix:** the tests assert that the key is absent, and the chat uses `result.get(...)`.
-4. **Erratic, slow responses: an environment problem, not a code problem.** The first policy answer took 69.7 s, later ones about 18 s. Timing each step showed the same work at wildly different speeds (embedding one question took 13.3 s once and 3.5 s the next; it should take well under a second). Both models stayed loaded, so this wasn't model swapping. The machine showed **0.38 GB of 7.9 GB RAM free, 4.3 GB in the page file, and 6,000â€“15,000 hard page faults per second while the CPU was 90% idle**: it was paging memory to disk. **No code fix:** closing heavy apps helps.
+4. **Erratic, slow responses: an environment problem, not a code problem.** The first policy answer took 69.7 s, later ones about 18 s. Timing each step showed the same work at wildly different speeds (embedding one question took 13.3 s once and 3.5 s the next; it should take well under a second). Both models stayed loaded, so this wasn't model swapping. The machine showed **0.38 GB of 7.9 GB RAM free, 4.3 GB in the page file, and 6,000–15,000 hard page faults per second while the CPU was 90% idle**: it was paging memory to disk. **No code fix:** closing heavy apps helps.
 5. **Stale Chroma folders (recorded, not fixed).** `chroma_db/` held 6 index folders, of which Chroma uses only 1. Each re-ingestion leaves the old one behind (about 314 KB each). It's harmless and I chose not to delete Chroma's internal files from our code.
 
 **What we learned:**
@@ -948,13 +948,13 @@ Every milestone follows the same cycle:
 **Known limitations:**
 - **Own-purchase questions that need policy answers get a placeholder** (planned for Milestone 4).
 - **Order, human-request, greeting and out-of-scope replies are still placeholders.**
-- **About 15â€“20 s per policy answer** on this machine, because of memory pressure.
+- **About 15–20 s per policy answer** on this machine, because of memory pressure.
 - **Each message is still handled on its own:** no conversation memory until Milestone 6.
 - The Milestone 2 limitations still apply (the warranty hallucination, occasional runaways and terse answers).
 
-### Milestone 4: tool calling âœ…
+### Milestone 4: tool calling ✅
 
-**Goal:** handle `order_issue` messages with an agent that calls tools to look up real order data and policies, in a LangGraph agent â‡„ tools loop.
+**Goal:** handle `order_issue` messages with an agent that calls tools to look up real order data and policies, in a LangGraph agent ⇄ tools loop.
 
 **Built:**
 - A SQLite order database with 12 mock orders, dated relative to the seeding day (`scripts/seed_orders.py`)
@@ -968,12 +968,12 @@ Every milestone follows the same cycle:
 
 | Message | Tool called | Result |
 |---|---|---|
-| Where is my order #1042? | `get_order_status(1042)` | âœ… shipped, tracking VC104200 |
-| Can I return the laptop from order 1001? | `check_return_eligibility(1001)` | âœ… until Oct 10, 15% fee |
-| Can I return the laptop I bought last week? | `get_order_status(`**`123456`**`)` | âŒ **invented an order ID**, then told the customer "I couldn't find your order with the order number 123456" |
-| My headphones from order 2231 arrived broken | `search_policies(...)` | âš ï¸ right steps (report within 48 h, replacement or refund), then the **false** "If the headphones were opened, they cannot be returned" |
-| Can I return my earbuds? Order 1004. | `check_return_eligibility(1004)` | âš ï¸ correctly refused, but added "There is no return deadline, but you will not be charged a restocking fee" |
-| Where is my order 9999? | `get_order_status(9999)` | âœ… "no order found" |
+| Where is my order #1042? | `get_order_status(1042)` | ✅ shipped, tracking VC104200 |
+| Can I return the laptop from order 1001? | `check_return_eligibility(1001)` | ✅ until Oct 10, 15% fee |
+| Can I return the laptop I bought last week? | `get_order_status(`**`123456`**`)` | ❌ **invented an order ID**, then told the customer "I couldn't find your order with the order number 123456" |
+| My headphones from order 2231 arrived broken | `search_policies(...)` | ⚠️ right steps (report within 48 h, replacement or refund), then the **false** "If the headphones were opened, they cannot be returned" |
+| Can I return my earbuds? Order 1004. | `check_return_eligibility(1004)` | ⚠️ correctly refused, but added "There is no return deadline, but you will not be charged a restocking fee" |
+| Where is my order 9999? | `get_order_status(9999)` | ✅ "no order found" |
 
 The agent **picked the right tool every time.** The problems were in *what it did with the arguments and results*.
 
@@ -1003,9 +1003,9 @@ The agent **picked the right tool every time.** The problems were in *what it di
 - **Loosely related rules still creep into `search_policies` answers** (see problem 3).
 - **Error messages from failing tools go to the model,** which decides how to phrase them. Proper escalation on failure comes in Milestone 5.
 - **Order data is mock data** with dates relative to the seeding day.
-- **15â€“30 s per order answer** on this machine (memory pressure, see Milestone 3).
+- **15–30 s per order answer** on this machine (memory pressure, see Milestone 3).
 
-### Milestone 5: human escalation âœ…
+### Milestone 5: human escalation ✅
 
 **Goal:** when the assistant can't or shouldn't handle a message, create a support ticket and tell the customer, instead of a placeholder or a dead end.
 
@@ -1021,15 +1021,15 @@ The agent **picked the right tool every time.** The problems were in *what it di
 
 | Message | What happened | Reply quality |
 |---|---|---|
-| "third time I'm asking, terrible service" | escalated (`human_request`) | âœ… |
-| "waited 3 weeks, nobody answers my emails" | escalated (`human_request`) | âœ… |
-| "Where the hell is my order 1042?" | agent | âœ… tracking number, but **invented** "expected to arrive soon" |
-| "headphones in 2231 arrived broken!" | agent | âš ï¸ checked only the status; missed the 48-hour damage rule |
-| "return policy is a joke, how long for headphones?" | RAG | âŒ answered about laptops (15 days), not headphones (30) |
-| "frustrated, laptop 1001 keeps crashing" | agent | âŒ **invented** "it seems to be in working condition" plus troubleshooting advice |
-| "so angry, I want a refund NOW for order 1002" | agent | âŒ didn't check eligibility; asked again for the order number it was given |
+| "third time I'm asking, terrible service" | escalated (`human_request`) | ✅ |
+| "waited 3 weeks, nobody answers my emails" | escalated (`human_request`) | ✅ |
+| "Where the hell is my order 1042?" | agent | ✅ tracking number, but **invented** "expected to arrive soon" |
+| "headphones in 2231 arrived broken!" | agent | ⚠️ checked only the status; missed the 48-hour damage rule |
+| "return policy is a joke, how long for headphones?" | RAG | ❌ answered about laptops (15 days), not headphones (30) |
+| "frustrated, laptop 1001 keeps crashing" | agent | ❌ **invented** "it seems to be in working condition" plus troubleshooting advice |
+| "so angry, I want a refund NOW for order 1002" | agent | ❌ didn't check eligibility; asked again for the order number it was given |
 
-**The bot did well for angry customers only 1 time out of 5**, which argues for escalating. But checking the classifier on *mild* messages showed the cost: "a little disappointed the drone is louderâ€¦ can I return it?", "slower than I hoped, can I still return it?" and "arrived broken, what can I do?" were **all `negative`**. They're easy return questions the agent handles, so **"negative â†’ escalate" would have escalated 3 of 3 needlessly.**
+**The bot did well for angry customers only 1 time out of 5**, which argues for escalating. But checking the classifier on *mild* messages showed the cost: "a little disappointed the drone is louder… can I return it?", "slower than I hoped, can I still return it?" and "arrived broken, what can I do?" were **all `negative`**. They're easy return questions the agent handles, so **"negative → escalate" would have escalated 3 of 3 needlessly.**
 
 **The fix:** split the label. I added **`angry`** (hostile, swearing, "NOW", "nobody answers") and kept `negative` for disappointed or frustrated, and escalate **only on `angry` or `human_request`**. Measured on 11 messages:
 - **The 6 mild or neutral messages all stay with the bot:** no over-escalation.
@@ -1056,9 +1056,9 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **Tickets record a single message**, not the conversation. Milestone 6's memory will make richer tickets possible.
 - **Nobody is notified about new tickets;** they are only listed by `scripts/tickets.py`.
 - **The bot still invents small details** in some order answers ("expected to arrive soon", "seems to be in working condition"). Only angry customers are protected from that by escalation.
-- **"Thanks, that was helpful!" gets the greeting reply** ("Hi! Welcome to VoltCart supportâ€¦"). It's harmless but awkward.
+- **"Thanks, that was helpful!" gets the greeting reply** ("Hi! Welcome to VoltCart support…"). It's harmless but awkward.
 
-### Milestone 6: conversation memory âœ…
+### Milestone 6: conversation memory ✅
 
 **Goal:** remember each conversation (per `thread_id`) so follow-ups like "Can I return it?" work, without the previous turn's results leaking into the next one.
 
@@ -1088,12 +1088,12 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 
    | Follow-up | Rewritten by qwen | |
    |---|---|---|
-   | "And how long does it take?" | "â€¦the order with order number **[order number]**â€¦" | âŒ invented placeholder |
-   | "Can I return it?" | "Can I return order 1001?" | âœ… |
-   | "What about order 1004?" | "What about returning order 1004?" | âœ… |
-   | "Thanks, that helps!" | "Thanksâ€¦ **I'll report the broken headphones from order 2231â€¦**" | âŒ invented content |
-   | "Where is my order 1042?" | unchanged | âœ… |
-   | "Can I use more than one on an order?" | "â€¦gift card on order **#XX**?" | âŒ invented placeholder |
+   | "And how long does it take?" | "…the order with order number **[order number]**…" | ❌ invented placeholder |
+   | "Can I return it?" | "Can I return order 1001?" | ✅ |
+   | "What about order 1004?" | "What about returning order 1004?" | ✅ |
+   | "Thanks, that helps!" | "Thanks… **I'll report the broken headphones from order 2231…**" | ❌ invented content |
+   | "Where is my order 1042?" | unchanged | ✅ |
+   | "Can I use more than one on an order?" | "…gift card on order **#XX**?" | ❌ invented placeholder |
 
    Three good and three harmful. A wrong rewrite is worse than none, because everything after it trusts the rewritten text. **Not adopted**; recorded as an `xfail` test.
 4. **`order_id` accepted anything.** The rewrite experiment produced `order_id="[order number]"` and `"XX"`. Constrained decoding guarantees a *string*, not *digits*. **Fix:** a Pydantic validator turns anything that isn't an order number into `None`. It deliberately doesn't raise, because raising would make the whole classification fail.
@@ -1114,12 +1114,12 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 
 | Conversation | Turn | Result |
 |---|---|---|
-| Order follow-ups | "Where is my order 1001?" | âœ… delivered, tracking number |
-| | "Can I return it?" | âœ… the classifier set `order_id=1001` from the previous turn; eligible until 2026-10-10, 15% fee |
-| | "What about order 1004?" | âš ï¸ looked up the *status*, not return eligibility; the "return" topic didn't carry over |
-| Policy follow-up | "How much is express shipping?" | âœ… $14.99 |
-| | "And how long does it take?" | âŒ classified `order_issue`; asked for an order number |
-| After help | "Thanks, that helps!" | âš ï¸ greeting reply ("Hi! Welcomeâ€¦"), as before |
+| Order follow-ups | "Where is my order 1001?" | ✅ delivered, tracking number |
+| | "Can I return it?" | ✅ the classifier set `order_id=1001` from the previous turn; eligible until 2026-10-10, 15% fee |
+| | "What about order 1004?" | ⚠️ looked up the *status*, not return eligibility; the "return" topic didn't carry over |
+| Policy follow-up | "How much is express shipping?" | ✅ $14.99 |
+| | "And how long does it take?" | ❌ classified `order_issue`; asked for an order number |
+| After help | "Thanks, that helps!" | ⚠️ greeting reply ("Hi! Welcome…"), as before |
 
 **What we learned:**
 - **Decide each piece of state's lifetime explicitly.** Memory turns every "harmless" leftover field into a bug on the next turn.
@@ -1136,7 +1136,7 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **Trimming counts messages, not tokens.** Very long individual messages could still fill the window.
 - **The full transcript grows in memory** for as long as the program runs; only the prompt is trimmed.
 
-### Milestone 7: HTTP API with FastAPI âœ…
+### Milestone 7: HTTP API with FastAPI ✅
 
 **Goal:** serve the assistant over HTTP, with conversations that survive a server restart, without changing how it answers.
 
@@ -1162,7 +1162,7 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 4. **A flaky real-model test (not fixed).** "My headphones from order 2231 arrived broken, what can I do?" sometimes makes the agent call `get_order_status` instead of `search_policies`, so the reply misses the 48-hour damage rule. Measured:
    - in an isolated script: correct 4 of 4 times
    - alone through pytest: passed 2 of 2
-   - after the other tests in `test_graph_llm.py`: failed 2 of 2 (it had passed in the Milestone 4â€“6 full runs)
+   - after the other tests in `test_graph_llm.py`: failed 2 of 2 (it had passed in the Milestone 4–6 full runs)
 
    The tests share no state, only the Ollama server, so the order-dependence points again to Ollama's prompt cache (unproven, as in Milestones 2 and 5). This matters, because **a real API server always has earlier requests**. The test is **left strict and failing visibly**. Measuring model-behaviour tests as pass *rates* is planned for Milestone 8.
 
@@ -1177,7 +1177,7 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **The per-conversation lock protects a single server process.** Several workers or servers would need locking in the database.
 - **No authentication:** anyone who can reach the server can read every ticket (out of scope by design).
 - **The lock dictionary grows with every conversation** for the lifetime of the process.
-- **Requests take 15â€“30 s** (over a minute on a cold start), with no streaming of partial answers.
+- **Requests take 15–30 s** (over a minute on a cold start), with no streaming of partial answers.
 - **The damaged-item tool choice is intermittent,** as described above.
 - **`data/conversations.db` keeps every conversation forever;** nothing cleans up old ones.
 
@@ -1187,17 +1187,17 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 
 | # | Milestone | What it adds | Status |
 |---|---|---|---|
-| 0 | Setup | Project skeleton, settings, first LLM call, pytest | âœ… Done |
-| 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent â†’ respond` | âœ… Done |
-| 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | âœ… Done |
-| 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | âœ… Done |
-| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent â‡„ tools loop | âœ… Done |
-| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | âœ… Done |
-| 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | âœ… Done |
-| 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | âœ… Done |
-| 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | â³ Next |
-| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | â¬œ |
-| 10 | Polish | Final docs, diagrams, demo | â¬œ |
+| 0 | Setup | Project skeleton, settings, first LLM call, pytest | ✅ Done |
+| 1 | Intent classifier and first graph | Pydantic structured output, LangGraph `classify_intent → respond` | ✅ Done |
+| 2 | RAG pipeline | Policy documents, chunking, embeddings, Chroma, answers with sources | ✅ Done |
+| 3 | Routing | Conditional edges: policy questions go to RAG, other messages go to a fallback | ✅ Done |
+| 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ✅ Done |
+| 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ✅ Done |
+| 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ✅ Done |
+| 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ✅ Done |
+| 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⏳ Next |
+| 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⬜ |
+| 10 | Polish | Final docs, diagrams, demo | ⬜ |
 
 ---
 

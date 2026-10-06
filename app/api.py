@@ -1,4 +1,4 @@
-﻿"""HTTP API for the support assistant. Run with: uvicorn app.api:app"""
+"""HTTP API for the support assistant. Run with: uvicorn app.api:app"""
 
 import threading
 import uuid
