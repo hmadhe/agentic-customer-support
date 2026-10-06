@@ -1,8 +1,21 @@
+import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from app.ingest import ingest
 from app.retriever import retrieve
-from app.vector_store import get_vector_store
+from app.vector_store import get_vector_store, require_ingested
+
+
+def test_empty_vector_store_is_reported_clearly(tmp_path):
+    store = get_vector_store(DeterministicFakeEmbedding(size=32), persist_directory=tmp_path / "store")
+
+    with pytest.raises(RuntimeError, match="scripts.ingest"):
+        require_ingested(store)
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.md").write_text("# A\n\n## One\n\nRule.\n", encoding="utf-8")
+    ingest(store, tmp_path / "docs")
+    require_ingested(store)  # no error once ingested
 
 
 def test_retrieve_returns_chunks_with_source_and_section(tmp_path):

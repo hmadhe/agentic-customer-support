@@ -126,7 +126,8 @@ def test_missing_order_number_is_asked_for_not_invented(graph):
     result = graph.invoke({"message": "Can I return the laptop I bought last week?"})
 
     assert not any(isinstance(message, ToolMessage) for message in result["messages"])
-    assert "order number" in result["response"].lower()
+    # The model words this itself when it asks without trying a lookup ("order number" or "order ID").
+    assert "order number" in result["response"].lower() or "order id" in result["response"].lower()
 
 
 def test_damaged_item_question_uses_the_policy_tool(graph):

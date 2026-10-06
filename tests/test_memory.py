@@ -168,6 +168,28 @@ def test_ticket_includes_the_earlier_conversation(make_graph, tickets_db):
     )
 
 
+def test_sqlite_conversations_survive_a_restart(order_db, tickets_db, tmp_path):
+    received = []
+
+    def classify(inputs):
+        received.append(inputs)
+        return IntentClassification(intent=INTENTS[inputs["message"]], sentiment=Sentiment.NEUTRAL)
+
+    def start_server():
+        # A brand-new checkpointer each time, like a server process starting up.
+        return build_graph(
+            RunnableLambda(classify), retriever=lambda _: [CHUNK],
+            answerer=lambda *_: PolicyAnswer(answered=True, answer="Express shipping costs $14.99.", sources=["shipping.md"]),
+            agent=RunnableLambda(lambda _: AIMessage("unused")), db_path=order_db, tickets_db_path=tickets_db,
+            checkpointer=make_checkpointer(tmp_path / "conversations.db"),
+        )
+
+    start_server().invoke({"message": "How much is express shipping?"}, thread())
+    start_server().invoke({"message": "Hi"}, thread())
+
+    assert received[1]["history"] == "Customer: How much is express shipping?\nAssistant: Express shipping costs $14.99."
+
+
 def test_separate_threads_do_not_share_state(make_graph, tickets_db):
     graph = make_graph()
 

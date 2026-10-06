@@ -1,8 +1,16 @@
+import sqlite3
+from pathlib import Path
+
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app.agent import current_turn
+from app.config import PROJECT_ROOT
+
+CONVERSATIONS_DB_PATH = PROJECT_ROOT / "data" / "conversations.db"
 
 # How many earlier customer/assistant messages the classifier sees as context.
 CLASSIFIER_HISTORY_MESSAGES = 6
@@ -25,9 +33,17 @@ STATE_TYPES = [
 ]
 
 
-def make_checkpointer() -> InMemorySaver:
-    """Saves each conversation (by thread_id) in memory: kept between messages, lost when the process stops."""
-    return InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES))
+def make_checkpointer(db_path: Path | None = None) -> BaseCheckpointSaver:
+    """Saves each conversation's state by thread_id.
+
+    Without a path: in memory, lost when the process stops (tests and the CLI chat).
+    With a path: in a SQLite file, so conversations survive a restart (the API server).
+    """
+    serde = JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES)
+    if db_path is None:
+        return InMemorySaver(serde=serde)
+    # check_same_thread=False: FastAPI runs requests on several threads. SqliteSaver has its own lock.
+    return SqliteSaver(sqlite3.connect(db_path, check_same_thread=False), serde=serde)
 
 
 def recent_messages(messages: list[AnyMessage], max_earlier: int = AGENT_HISTORY_MESSAGES) -> list[AnyMessage]:

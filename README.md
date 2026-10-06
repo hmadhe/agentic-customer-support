@@ -4,7 +4,7 @@ An AI customer-support assistant for **VoltCart**, a fictional online electronic
 
 The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
 
-> **Status:** Milestone 6 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, so follow-ups like "Can I return it?" work. See the [roadmap](#roadmap).
+> **Status:** Milestone 7 of 10 complete. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
 
 ---
 
@@ -53,7 +53,7 @@ It also escalates to a human when it **cannot find a reliable answer**, rather t
 | **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
 | **pytest** | Automated tests | ✅ In use |
 | **SQLite** | Mock order database and support tickets | ✅ In use |
-| **FastAPI** | HTTP API that exposes the assistant | ⏳ Milestone 7 |
+| **FastAPI + uvicorn** | HTTP API that exposes the assistant; Swagger UI at `/docs` as the demo | ✅ In use |
 
 ---
 
@@ -161,7 +161,8 @@ agentic-customer-support/
 │   ├── tools.py          # LangChain tools the agent can call, with Pydantic-validated inputs
 │   ├── agent.py          # Agent prompt, tool-round limit, and the invented-order-ID guard
 │   ├── tickets.py        # Support tickets (SQLite), escalation reasons and the replies for each
-│   └── memory.py         # Checkpointer, conversation history for the classifier/tickets, and history trimming
+│   ├── memory.py         # Checkpointer (in memory or SQLite), conversation history, history trimming
+│   └── api.py            # FastAPI app: /chat, /tickets, /health
 ├── data/
 │   └── policies/         # VoltCart policy documents: shipping, returns, warranty, payments, account
 ├── scripts/
@@ -178,7 +179,9 @@ agentic-customer-support/
 │   ├── test_orders.py           # Unit tests: order database and return-eligibility rules
 │   ├── test_tools.py            # Unit tests: tool inputs and outputs, invented-order-ID detection
 │   ├── test_tickets.py          # Unit tests: creating and listing tickets, schema migration
-│   ├── test_memory.py           # Unit tests: multi-turn conversations, per-turn reset, history trimming
+│   ├── test_memory.py           # Unit tests: multi-turn conversations, per-turn reset, trimming, restart
+│   ├── test_api.py              # Unit tests: every endpoint, errors, concurrency, startup failure (fake graph)
+│   ├── test_api_llm.py          # Real-model test: a policy question through the API (-m llm)
 │   ├── test_ingest.py           # Unit tests: chunking, metadata, no duplicates on re-ingest (fake embeddings)
 │   ├── test_retriever.py        # Unit test: retrieved chunks carry source and section (fake embeddings)
 │   ├── test_answer.py           # Unit tests: source filtering and "insufficient" handling (fake answer chain)
@@ -201,6 +204,7 @@ These files are created locally and **never committed**:
 | `chroma_db/` | The vector store built by `python -m scripts.ingest`. It is rebuilt from `data/policies/`, so it doesn't need to be in git |
 | `data/voltcart.db` | The mock order database created by `python -m scripts.seed_orders`. Its dates are relative to the day it was seeded |
 | `data/tickets.db` | Support tickets created by escalations. Created automatically on the first escalation and kept when the orders are re-seeded |
+| `data/conversations.db` | The API's saved conversations (LangGraph checkpoints), so they survive a server restart. Delete it to forget all conversations |
 
 ---
 
@@ -297,7 +301,7 @@ The **first run after starting Ollama is much slower** (about 30 seconds) becaus
 python -m pytest -v
 ```
 
-Expected: `80 passed, 50 deselected`. The 50 deselected tests call real models and are skipped by default. See [Testing](#testing).
+Expected: `94 passed, 51 deselected`. The 51 deselected tests call real models and are skipped by default. See [Testing](#testing).
 
 ### 8. Build the policy vector store and the order database
 
@@ -410,6 +414,41 @@ A: I'm sorry, I don't have VoltCart policy information that answers this questio
 
 The second question shows two things. The retriever **always returns 4 chunks, even when none of them is relevant**, and the answer step is what recognises that they don't answer the question.
 
+### 11. Run the API
+
+```bash
+uvicorn app.api:app --port 8000
+```
+
+Then open **<http://127.0.0.1:8000/docs>** for the interactive Swagger UI, or call it directly:
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
+     -d '{"message": "Where is my order 1001?"}'
+```
+
+A real response:
+
+```json
+{"thread_id":"a9e8d41d-4d90-4baa-accc-5866f94d44f4",
+ "reply":"Your order 1001 has been delivered. The Lenovo ThinkPad X1 laptop was delivered on 2026-09-25. Tracking number: VC100100.",
+ "intent":"order_issue","sentiment":"neutral","order_id":"1001",
+ "sources":[],"tools_used":["get_order_status"],
+ "escalated":false,"escalation_reason":null,"ticket_id":null}
+```
+
+**To continue the conversation, send the same `thread_id` back:** `{"message": "Can I return it?", "thread_id": "a9e8d41d-…"}`.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /chat` | Send a message. Leave out `thread_id` to start a new conversation |
+| `GET /tickets` | All support tickets created by escalations |
+| `GET /tickets/{id}` | One ticket (`404` if it doesn't exist) |
+| `GET /health` | `{"status": "ok"}` once the server has started |
+
+- **The server refuses to start** if the order database or the vector store is missing, and tells you which script to run.
+- **Allow time:** the first request after Ollama starts can take more than a minute (models loading), and later ones take 15–30 s on this machine. Set your HTTP client's timeout accordingly.
+
 ---
 
 ## Configuration
@@ -495,7 +534,7 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 - **Routing:** the route functions only read state and return the next node's name. The decision to escalate is made in the node that has the information, so the routing stays trivial.
   - `route_by_intent` checks `needs_human_now()` first (`human_request` or `angry`) and sends those to `escalate`. Otherwise `policy_question` goes to `retrieve`, `order_issue` to `agent`, and the rest to `respond`.
   - `route_after_answer` and `route_after_agent` go to `escalate` if an escalation reason was set. `route_after_agent` otherwise runs the tools if the agent asked for any, or finishes.
-- **`build_graph(...)`** creates the real vector store, answer chain, tools and agent **once**. It accepts fakes for the classifier, retriever, answerer and agent, plus `db_path`, `tickets_db_path` and an optional `checkpointer`, which is how the unit tests run without models or real databases. It **refuses to start** if the order database doesn't exist.
+- **`build_graph(...)`** creates the real vector store, answer chain, tools and agent **once**. It accepts fakes for the classifier, retriever, answerer and agent, plus `db_path`, `tickets_db_path` and an optional `checkpointer`, which is how the unit tests run without models or real databases. It **refuses to start** if the order database doesn't exist or (since Milestone 7) the policy vector store is empty.
 - **Memory:** with a `checkpointer`, call `graph.invoke({"message": ...}, {"configurable": {"thread_id": "..."}})`. The same `thread_id` continues the same conversation. Without one, each call is a fresh one-message conversation.
 
 > **Gotchas:**
@@ -557,7 +596,11 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 
 ### `app/memory.py`: conversation memory
 
-- **`make_checkpointer()`** returns LangGraph's `InMemorySaver`, which saves each conversation's state by `thread_id`. Conversations are kept between messages but **lost when the program stops**. Its serializer **registers our own state types** (`Intent`, `Ticket`, …). Without that, every turn logged "Deserializing unregistered type … will be blocked in a future version".
+- **`make_checkpointer(db_path=None)`** saves each conversation's state by `thread_id`:
+  - **without a path** (the CLI chat and the tests), LangGraph's `InMemorySaver`, which is lost when the program stops
+  - **with a path** (the API, `data/conversations.db`), LangGraph's `SqliteSaver`, which **survives a restart**. Its connection uses `check_same_thread=False` because FastAPI handles requests on several threads; `SqliteSaver` has its own lock.
+
+  Both register our own state types (`Intent`, `Ticket`, …) with the serializer. Without that, every turn logged "Deserializing unregistered type … will be blocked in a future version".
 - **`format_history(messages)`** turns the last few customer and assistant messages into plain text, leaving out tool steps. It's used for the classifier's context (6 messages) and for tickets (10).
 - **`recent_messages(messages)`** decides what the **agent** sees: the current turn in full, plus at most **20 earlier messages**, always starting at a customer message.
 
@@ -566,6 +609,24 @@ The classifier is a LangChain chain: `prompt | llm.with_structured_output(Intent
 ### `scripts/chat.py`: command-line chat
 
 A loop that reads a message, runs the graph and prints the classification, the reply, the sources or tools used, and any escalation. **The whole session is one conversation** (one `thread_id`), so follow-ups work until you quit.
+
+### `app/api.py`: the HTTP API
+
+- **`create_app(graph_factory, tickets_db_path)`** builds the FastAPI app. The graph is built **once, at startup**, in FastAPI's `lifespan` hook, so a missing database or empty vector store stops the server *before* it accepts requests. Tests pass a factory that builds a graph from fakes.
+- **Pydantic request and response models.** `ChatRequest` checks the message (1–2,000 characters; otherwise `422`). `ChatResponse` tells a client everything about the turn: reply, intent, sentiment, order number, sources, tools used, and any escalation and ticket number. The same models generate the Swagger documentation.
+- **`/chat` is a plain `def`, deliberately not `async def`.** The graph makes blocking calls (Ollama over HTTP, SQLite). Measured on a real uvicorn server with a 3-second fake graph:
+
+  | `/chat` defined as | `/health` while 2 chats run | 2 simultaneous chats |
+  |---|---|---|
+  | `async def` | **6.03 s** (waits for both) | **6.5 s** (one after the other) |
+  | `def` | **0.38 s** | **3.5 s** (in parallel) |
+
+  `async def` runs on the single event loop, so blocking code there freezes *every* request. FastAPI runs `def` endpoints on a thread pool instead.
+- **One lock per conversation.** Two simultaneous messages with the same `thread_id` (a double-click, or a client retry) both loaded the same saved state, and the second save overwrote the first, **silently losing a message**. A per-`thread_id` lock makes them run one after the other; different conversations still run in parallel. The lock lives in the server process, so it protects **one** server process only.
+- **Errors:**
+  - **Ollama unreachable:** `503 Service Unavailable` ("please try again later") instead of a bare `500`. The real exception is `httpx.ConnectError`, which is **not** a subclass of Python's `ConnectionError`, so the handler catches `httpx.TransportError` as well.
+  - **Unknown ticket:** `404`.
+  - **Invalid request:** `422`, raised by FastAPI.
 
 ### RAG: why each piece exists
 
@@ -584,6 +645,7 @@ An LLM on its own doesn't know VoltCart's policies, so it would invent them. **R
 - **Embeddings** turn text into a list of numbers (a vector) so that texts with similar meaning get similar vectors. We use `nomic-embed-text` through Ollama.
 - **`NomicEmbeddings`** adds the task prefixes this model was trained with: `search_document: ` on stored chunks and `search_query: ` on questions. Without them, the chunk that actually answers "My laptop stopped working after 6 months" wasn't in the top 4 results; with them, it ranks 2nd.
 - **Chroma** stores the vectors on disk in `chroma_db/`. It is set to **cosine similarity**, so relevance scores run from 0 to 1 and are easy to compare.
+- **`require_ingested()`** raises with instructions if the collection is empty. An empty store produces no error by itself: retrieval just returns nothing, and *every* policy question would quietly be escalated as `policy_not_found`.
 
 ### `app/ingest.py`: how ingestion works
 
@@ -626,8 +688,10 @@ There are two kinds of tests:
 
 | Kind | Files | Needs Ollama? | Speed | Command | Result now |
 |---|---|---|---|---|---|
-| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py` | No (fakes) | About 5 seconds | `python -m pytest` | 80 passed |
-| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py` | Yes | About 8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed |
+| **Unit tests** | `test_llm.py`, `test_graph.py`, `test_ingest.py`, `test_retriever.py`, `test_answer.py`, `test_orders.py`, `test_tools.py`, `test_tickets.py`, `test_memory.py`, `test_api.py` | No (fakes) | About 6 seconds | `python -m pytest` | 94 passed |
+| **Real-model tests** | `test_classifier_llm.py`, `test_rag_llm.py`, `test_graph_llm.py`, `test_api_llm.py` | Yes | About 7–8 minutes | `python -m pytest -m llm` | 47 passed, 3 xfailed, **1 failing intermittently** (see below) |
+
+> **Known flaky test:** `test_damaged_item_question_uses_the_policy_tool` passes when run alone (6 of 6) but failed 2 of 2 times when run after the other tests in Milestone 7. The agent then calls `get_order_status` instead of `search_policies`, and the customer misses the 48-hour damage rule. It's left strict on purpose; see the [Milestone 7 log](#milestone-7-http-api-with-fastapi-).
 
 **Unit tests** check *our* code, using fakes so they're fast and give the same result every time:
 - **Graph routing:** fake classifier, retriever and answerer. Greetings and off-topic messages must skip RAG and tools (the fakes raise an error if called). A policy question must go through retrieve and then answer.
@@ -639,6 +703,13 @@ There are two kinds of tests:
   - tickets include earlier turns
   - trimming keeps the current turn whole and starts at a customer message
   - reloading saved state logs no "unregistered type" warning
+- **API (`test_api.py`):** FastAPI's `TestClient` with a graph made of fakes. It covers:
+  - every endpoint's response fields
+  - continuing a conversation by `thread_id`
+  - `422` for invalid messages, `404` for an unknown ticket, and `503` when the model is unreachable
+  - the server refusing to start when setup is missing
+  - **two simultaneous messages on one conversation** both being saved. I checked this test fails with the lock removed.
+- **Persistence:** a conversation written by one SQLite checkpointer is continued by a **brand-new** one on the same file, simulating a server restart.
 - **Escalation:** each of the 6 reasons must create exactly one ticket with that reason, using a temporary tickets database per test.
   - An `angry` customer is escalated **before** the agent runs; a merely `negative` one is still helped by the agent.
   - When the ticket can't be saved, the reply must not mention a ticket.
@@ -699,6 +770,11 @@ Each problem below was hit or reproduced during development.
 | `Deserializing unregistered type app.schemas.Intent from checkpoint. This will be blocked in a future version` | A checkpointer was created without registering our state types | Use `app.memory.make_checkpointer()` instead of a plain `InMemorySaver()` |
 | `sqlite3.OperationalError: table tickets has no column named conversation` (shows the customer "couldn't pass this to our support team") | A tickets database from before Milestone 6, with code that lacks the migration | Update; `_connect()` now adds the column automatically |
 | On a follow-up, the bot answers the *previous* question again, or escalates a question it answered | Per-turn state leaking into the next turn (fixed in Milestone 6) | If you add a per-turn field to `SupportState`, also add it to `NEW_TURN` |
+| `RuntimeError: The policy vector store is empty. Build it with: python -m scripts.ingest` on startup | Ingestion was never run (or `chroma_db/` was deleted) | Run `python -m scripts.ingest` |
+| `/chat` returns `503 The language model is unavailable` | Ollama isn't running or isn't reachable | Start Ollama, then retry |
+| The HTTP client times out on `/chat` | Answers take 15–30 s on a CPU, and over a minute while Ollama loads the models | Use a client timeout of at least 2 minutes |
+| All requests become slow while one `/chat` runs | Someone changed `/chat` to `async def`, so blocking code froze the event loop | Keep `/chat` a plain `def` (see `app/api.py`) |
+| A conversation continued after restarting the server has no memory of earlier turns | The `thread_id` wasn't sent back, or `data/conversations.db` was deleted | Send the `thread_id` from the previous response |
 | "And how long does it take?" after a shipping question asks for an order number | qwen classifies pronoun-only follow-ups as order questions, even with context | Ask the full question ("How long does express shipping take?") |
 | `FileNotFoundError: Order database not found ... Create it with: python -m scripts.seed_orders` | The order database was never created | Run `python -m scripts.seed_orders` |
 | `sqlite3.OperationalError: no such table: orders` | An empty `voltcart.db` was created by older code or another tool | Run `python -m scripts.seed_orders`, which recreates the table |
@@ -1060,6 +1136,51 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **Trimming counts messages, not tokens.** Very long individual messages could still fill the window.
 - **The full transcript grows in memory** for as long as the program runs; only the prompt is trimmed.
 
+### Milestone 7: HTTP API with FastAPI ✅
+
+**Goal:** serve the assistant over HTTP, with conversations that survive a server restart, without changing how it answers.
+
+**Built:**
+- `app/api.py`: `POST /chat`, `GET /tickets`, `GET /tickets/{id}`, `GET /health`, with Pydantic request and response models and Swagger UI at `/docs`
+- The graph built once at startup (`lifespan`); the server refuses to start if the order database is missing **or the vector store is empty** (new `require_ingested()`)
+- A SQLite checkpointer (`data/conversations.db`) through `make_checkpointer(path)`
+- `503` when Ollama is unreachable, `404` for unknown tickets, `422` for invalid requests
+- A per-conversation lock for simultaneous messages on one `thread_id`
+- 14 new unit tests (12 API, 1 restart, 1 empty store) and 1 real-model API test
+
+**Investigations, with the actual results:**
+1. **`async def` vs `def` for `/chat`.** I started with `async def`, the usual first choice, and measured on a real uvicorn server with a fake graph doing 3 s of blocking work. `/health` took **2.94 s** during one chat. With two simultaneous chats it took **6.03 s**, and the chats ran **one after the other (6.5 s)**. Blocking calls inside `async def` freeze FastAPI's single event loop. With a plain **`def`**: `/health` **0.38 s**, two chats **in parallel (3.5 s)**. **Kept `def`**, with a comment explaining why.
+2. **Two simultaneous messages on one conversation.** Through the real server: two messages sent at once with the same `thread_id`, and afterwards the saved conversation contained **only one of them**. Both requests loaded the same state, and the second save overwrote the first. **There was no error, and both requests looked successful.** **Fix:** one lock per `thread_id`. Re-run: both messages saved, and different conversations still ran in parallel (3.5 s). I also checked that the unit test **fails with the lock removed**, so it really guards against this.
+3. **What does "Ollama is down" actually raise?** `httpx.ConnectError`, which is **not** a subclass of Python's `ConnectionError`, so a handler written for `ConnectionError` would have returned a bare `500`. The API catches `httpx.TransportError` (which also covers timeouts) as well as `ConnectionError`, and returns `503`.
+4. **An empty vector store fails silently.** Without `scripts.ingest`, retrieval returns nothing, the answer step says "not answered", and every policy question becomes a `policy_not_found` ticket, with no error anywhere. **Fix:** `require_ingested()` at startup.
+5. **Persistence with the real server.** I ran a two-turn conversation ("Where is my order 1001?", then "Can I return it?"), **stopped the server, confirmed port 8000 was closed, started a new process**, and sent "What is the tracking number for it?" with the same `thread_id`. Reply: *"The tracking number for your order 1001 is VC100100."* `tools_used` was empty: the agent answered from turn 1's tool result, **reloaded from `data/conversations.db`**.
+
+**Problems hit and how they were fixed:**
+1. **`async def` blocked the server** (investigation 1). Fixed with `def`.
+2. **Lost messages on simultaneous requests** (investigation 2). Fixed with a per-conversation lock.
+3. **A real-model test was too strict about wording.** "Missing order number" failed because the bot asked for the "order **ID**". The behaviour was correct (no tool call, nothing invented), so the test now accepts either phrase.
+4. **A flaky real-model test (not fixed).** "My headphones from order 2231 arrived broken, what can I do?" sometimes makes the agent call `get_order_status` instead of `search_policies`, so the reply misses the 48-hour damage rule. Measured:
+   - in an isolated script: correct 4 of 4 times
+   - alone through pytest: passed 2 of 2
+   - after the other tests in `test_graph_llm.py`: failed 2 of 2 (it had passed in the Milestone 4–6 full runs)
+
+   The tests share no state, only the Ollama server, so the order-dependence points again to Ollama's prompt cache (unproven, as in Milestones 2 and 5). This matters, because **a real API server always has earlier requests**. The test is **left strict and failing visibly**. Measuring model-behaviour tests as pass *rates* is planned for Milestone 8.
+
+**What we learned:**
+- **`async def` isn't automatically faster.** With blocking code inside, it's worse, and only a concurrent measurement shows it.
+- **Concurrency bugs hide behind successful responses.** The lost message produced two `200 OK`s.
+- **Catch the exception that's actually raised.** I checked instead of assuming.
+- **Fail at startup, not on the first customer.** A missing setup step should stop the server with instructions.
+- **Some tests depend on what ran before them.** "Passes alone, fails in the suite" is evidence, not noise.
+
+**Known limitations:**
+- **The per-conversation lock protects a single server process.** Several workers or servers would need locking in the database.
+- **No authentication:** anyone who can reach the server can read every ticket (out of scope by design).
+- **The lock dictionary grows with every conversation** for the lifetime of the process.
+- **Requests take 15–30 s** (over a minute on a cold start), with no streaming of partial answers.
+- **The damaged-item tool choice is intermittent,** as described above.
+- **`data/conversations.db` keeps every conversation forever;** nothing cleans up old ones.
+
 ---
 
 ## Roadmap
@@ -1073,8 +1194,8 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 | 4 | Tool calling | SQLite order database, order-status and return-eligibility tools, a `search_policies` tool, agent ⇄ tools loop | ✅ Done |
 | 5 | Human escalation | Escalation rules, support tickets, fallback when an answer isn't grounded | ✅ Done |
 | 6 | Conversation memory | LangGraph checkpointer, multi-turn conversations per thread | ✅ Done |
-| 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ⏳ Next |
-| 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⬜ |
+| 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ✅ Done |
+| 8 | Testing | Unit tests for tools and routing (fake LLM), API tests | ⏳ Next |
 | 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ⬜ |
 | 10 | Polish | Final docs, diagrams, demo | ⬜ |
 

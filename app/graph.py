@@ -36,7 +36,7 @@ from app.tickets import (
     create_ticket,
 )
 from app.tools import build_tools
-from app.vector_store import get_vector_store
+from app.vector_store import get_vector_store, require_ingested
 
 Retriever = Callable[[str], list[RetrievedChunk]]
 Answerer = Callable[[str, list[RetrievedChunk]], PolicyAnswer]
@@ -126,6 +126,7 @@ def build_graph(
     classifier = classifier or build_classifier()
     if retriever is None:
         vector_store = get_vector_store()
+        require_ingested(vector_store)  # like the order database: stop now if setup was skipped
         retriever = lambda question: retrieve(question, vector_store=vector_store)  # noqa: E731
     if answerer is None:
         answer_chain = build_answer_chain()

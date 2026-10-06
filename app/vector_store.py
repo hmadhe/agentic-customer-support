@@ -29,6 +29,16 @@ def get_embeddings(settings: Settings | None = None) -> NomicEmbeddings:
     return NomicEmbeddings(model=settings.ollama_embedding_model, base_url=settings.ollama_base_url)
 
 
+def require_ingested(vector_store: Chroma) -> None:
+    """Fail early if ingestion was never run.
+
+    An empty store doesn't raise anywhere: retrieval returns nothing, so every policy question would
+    quietly be escalated as "policy not found".
+    """
+    if not vector_store.get(limit=1)["ids"]:
+        raise RuntimeError("The policy vector store is empty. Build it with: python -m scripts.ingest")
+
+
 def get_vector_store(embeddings: Embeddings | None = None, persist_directory: Path = CHROMA_DIR) -> Chroma:
     """The Chroma collection shared by ingestion and retrieval, saved to disk in chroma_db/."""
     return Chroma(
