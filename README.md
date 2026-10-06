@@ -2,24 +2,67 @@
 
 [![tests](https://github.com/hmadhe/agentic-customer-support/actions/workflows/tests.yml/badge.svg)](https://github.com/hmadhe/agentic-customer-support/actions/workflows/tests.yml)
 
-An AI customer-support assistant for **VoltCart**, a fictional online electronics store. When finished, it will answer policy questions from company documents (RAG), look up orders using tools, and hand the conversation to a human when it should. It is built with **LangChain, LangGraph, Pydantic and FastAPI** and runs on a **local LLM through Ollama**, so no paid API key is needed.
+An AI customer-support assistant for **VoltCart**, a fictional online electronics store. It answers policy questions from company documents (**RAG**), looks up orders and return eligibility with **tool calling**, remembers the conversation, and **hands over to a human** with a support ticket when it should. Built with **LangChain, LangGraph, Pydantic and FastAPI** on a **local LLM through Ollama** (`qwen2.5:3b`), so it runs offline and needs no API key.
 
-The project is built in small milestones. Each one is planned, implemented, run, tested, debugged and reviewed before the next one starts. The [development log](#development-log) records what was built and what went wrong along the way.
+The project was built in 10 small milestones (plan → build → run → test → debug → review). The [development log](#development-log) records every real problem found along the way and how it was measured and fixed.
 
-> **Status:** Milestone 9 of 10 complete. An evaluation on 52 realistic cases gives **79% passing every check** and **87% correct for the customer** ([results](#evaluation)). The unit tests run automatically on GitHub Actions for every push. A LangGraph workflow classifies each customer message. **Policy questions go to RAG**, and **order questions go to a tool-calling agent** that looks up orders in SQLite. When the customer asks for a person, is angry, or the assistant can't answer reliably, it **escalates** with a support ticket. Conversations are **remembered**, and since Milestone 7 everything is served by a **FastAPI** HTTP API whose conversations survive a server restart. See the [roadmap](#roadmap).
+---
+
+## At a glance
+
+**What it does**
+
+| Customer message | What happens |
+|---|---|
+| *"How much is express shipping?"* | Retrieves the relevant policy section and answers with its source: **"$14.99"** (`shipping.md`) |
+| *"Where is my order 1001?"* → *"Can I return it?"* | An agent calls tools on the order database. Turn 2 understands "it" from turn 1: **"Your order 1001 can be returned until 2026-10-10. A 15% restocking fee will apply."** |
+| *"Do you offer price matching?"* | Not in the policies, so it **creates a ticket** instead of guessing |
+| *"I'm so angry, I want a refund NOW for order 1002"* | Detected as angry, so it **escalates** straight to a person with a ticket |
+
+**Results** (from [`eval/report.md`](eval/report.md) and the test suites)
+
+| Measure | Result |
+|---|---|
+| Evaluation: 52 realistic cases, every check passed | **41/52 (79%)** |
+| Evaluation: customer got a correct answer | **45/52 (87%)** |
+| Escalations and "don't escalate" cases | 5 of 6 correct |
+| Unit tests (fakes, run on GitHub Actions) | **106 passing**, 97% coverage of `app/` |
+| Real-model tests | 47 passing every run (3 runs), 3 known limitations as `xfail`, 1 [known failure](#testing) |
+
+**Engineering highlights**: each one measured, not assumed:
+
+- **Business rules live in code, not in the LLM.** Return windows and fees are computed in Python. After qwen **invented an order number** (`123456`) despite the prompt, a code check now blocks lookups of numbers the customer never gave. ([Milestone 4](#milestone-4-tool-calling-))
+- **Over-escalation measured before choosing a rule.** "Escalate negative customers" would have sent 3 of 3 mildly unhappy but easy questions to a human, so the `negative` label was split into `negative` and `angry`. ([Milestone 5](#milestone-5-human-escalation-))
+- **A silent context overflow.** At turn 40, Ollama quietly dropped about 2,200 tokens of the conversation and left about 14 for the reply. History trimming keeps the prompt at about 1,230 tokens. ([Milestone 6](#milestone-6-conversation-memory-))
+- **`async def` froze the server.** A health check took **6.03 s** behind two chats; as a plain `def`, **0.38 s**. Two simultaneous messages on one conversation **silently lost one**, which a per-conversation lock fixes. ([Milestone 7](#milestone-7-http-api-with-fastapi-))
+- **The evaluation found what tests didn't:** a confidently **false** answer ("You cannot return this order as it's already delivered"). A confidently wrong answer is worse than an escalation. ([Milestone 9](#milestone-9-evaluation-))
+- **Hypotheses tested, including my own.** An explanation I'd repeated since Milestone 2 was disproved by experiment and corrected in the log. ([Milestone 8](#milestone-8-testing-coverage-ci-and-pass-rates-))
+
+**Quick start** (full steps in [Getting started](#getting-started)):
+
+```bash
+git clone https://github.com/hmadhe/agentic-customer-support.git && cd agentic-customer-support
+python -m venv .venv            # then activate it (see Getting started)
+pip install -r requirements.txt
+ollama pull qwen2.5:3b && ollama pull nomic-embed-text
+cp .env.example .env            # Windows: Copy-Item .env.example .env
+python -m scripts.ingest && python -m scripts.seed_orders
+uvicorn app.api:app --port 8200 # then open http://127.0.0.1:8200/docs
+```
 
 ---
 
 ## Table of contents
 
-- [What the assistant will do](#what-the-assistant-will-do)
+- [At a glance](#at-a-glance)
+- [Demo](#demo)
 - [Tech stack](#tech-stack)
 - [Architecture](#architecture)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
-- [How the current code works](#how-the-current-code-works)
-- [Testing](#testing)
+- [How the code works](#how-the-code-works)
+- [Testing](#testing) (including the [evaluation](#evaluation))
 - [Troubleshooting](#troubleshooting)
 - [Development log](#development-log)
 - [Roadmap](#roadmap)
@@ -27,84 +70,100 @@ The project is built in small milestones. Each one is planned, implemented, run,
 
 ---
 
-## What the assistant will do
+## Demo
 
-A VoltCart customer sends a message, and the assistant decides what kind of help it needs:
+Start the API (`uvicorn app.api:app --port 8200`), open **http://127.0.0.1:8200/docs**, and use **POST /chat → Try it out**. Every reply below is **real output** from this project's runs (on a CPU each takes about 15–30 s, and over a minute for the first request after Ollama starts).
 
-| Customer message | What the assistant does |
-|---|---|
-| *"What is your return policy?"* | Searches VoltCart's policy documents and answers with the source it used (RAG) |
-| *"Where is my order #1042?"* | Calls a tool that looks the order up in a database |
-| *"This is the third time I'm asking. I want a person!"* | Creates a support ticket with a summary and hands off to a human |
-| *"And what about my other order?"* | Uses the earlier conversation to understand the follow-up |
+**1. A policy question, answered from the documents with a source:**
 
-It also escalates to a human when it **cannot find a reliable answer**, rather than guessing.
+```json
+{"message": "How much is express shipping?"}
+→ "reply": "$14.99", "intent": "policy_question", "sources": ["shipping.md"]
+```
+
+**2. An order question, then a follow-up in the same conversation.** Send the returned `thread_id` back:
+
+```json
+{"message": "Where is my order 1001?"}
+→ "reply": "Your order 1001 has been delivered. The Lenovo ThinkPad X1 laptop was delivered on 2026-09-25. Tracking number: VC100100.",
+  "tools_used": ["get_order_status"], "thread_id": "a9e8d41d-…"
+
+{"message": "Can I return it?", "thread_id": "a9e8d41d-…"}
+→ "reply": "Your order 1001 can be returned until 2026-10-10. A 15% restocking fee will apply.",
+  "tools_used": ["check_return_eligibility"]
+```
+
+**3. The conversation survives a server restart.** Stop and restart `uvicorn`, then continue the same `thread_id`:
+
+```json
+{"message": "What is the tracking number for it?", "thread_id": "a9e8d41d-…"}
+→ "reply": "The tracking number for your order 1001 is VC100100.", "tools_used": []
+```
+
+No tool was needed: the earlier tool result was reloaded from `data/conversations.db`.
+
+**4. Escalation instead of guessing, and for angry customers:**
+
+```json
+{"message": "Do you offer price matching?"}
+→ "reply": "I don't have VoltCart policy information that answers this, so I've passed it to our support team (ticket #2). A team member will contact you soon.",
+  "escalated": true, "escalation_reason": "policy_not_found"
+
+{"message": "I'm so angry, I want a refund NOW for order 1002"}
+→ "reply": "I'm sorry about your experience. I've passed this to our support team (ticket #1) so a team member can help you personally.",
+  "escalated": true, "escalation_reason": "angry_customer"
+```
+
+(The two replies come from different runs, so their ticket numbers are independent.) **GET /tickets** then lists the tickets, with the recent conversation saved for the support team.
+
+**Mock orders to try:** 1001 (returnable laptop, 15% fee), 1002 (return window over), 1004 (opened earbuds, not returnable), 1042 (shipped, with tracking), 1007 (still processing). See [the full list](#9-chat-with-the-assistant).
 
 ---
 
 ## Tech stack
 
-| Technology | Role in this project | Status |
-|---|---|---|
-| **Python 3.11** | Language | ✅ In use |
-| **Ollama + `qwen2.5:3b`** | Runs the chat LLM locally on the CPU, free and offline | ✅ In use |
-| **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search | ✅ In use |
-| **LangChain** | Building blocks: chat model interface, structured output, tools, document loaders, retrievers | ✅ In use (chat model, prompts, structured output, text splitters, embeddings, Chroma wrapper) |
-| **Pydantic** | Validated data models for settings, LLM outputs, tool inputs and API requests/responses | ✅ In use (settings, LLM output schemas, graph state, retrieved chunks) |
-| **LangGraph** | Orchestrates the workflow: classify, route, act, answer or escalate | ✅ In use (conditional routing, agent ⇄ tools loop with `ToolNode`) |
-| **Chroma** | Local vector store for document search (RAG), saved to disk | ✅ In use |
-| **pytest** | Automated tests | ✅ In use |
-| **SQLite** | Mock order database and support tickets | ✅ In use |
-| **FastAPI + uvicorn** | HTTP API that exposes the assistant; Swagger UI at `/docs` as the demo | ✅ In use |
+| Technology | Role in this project |
+|---|---|
+| **Python 3.11** | Language |
+| **Ollama + `qwen2.5:3b`** | The chat LLM, running locally on the CPU (free and offline) |
+| **Ollama + `nomic-embed-text`** | Local embedding model: turns text into vectors for search |
+| **LangChain** | Chat model interface, prompts, structured output, tools, text splitters, embeddings, Chroma wrapper |
+| **LangGraph** | The workflow: conditional routing, an agent ⇄ tools loop (`ToolNode`), and conversation memory (checkpointers) |
+| **Pydantic** | Settings, LLM output schemas, tool inputs, graph state, and API requests and responses |
+| **Chroma** | Local vector store for the policy documents |
+| **SQLite** | Mock orders, support tickets, and saved conversations |
+| **FastAPI + uvicorn** | HTTP API, with Swagger UI at `/docs` |
+| **pytest, pytest-cov, GitHub Actions** | Unit and real-model tests, coverage, and CI |
 
 ---
 
 ## Architecture
 
-The target design is below. **Most of it is not built yet.** Each milestone adds one piece.
-
 ```
-   Client (curl / Swagger UI / CLI)
-                 │
-                 ▼
-   ┌──────────────────────────────┐
-   │ FastAPI                      │  POST /chat, GET /tickets
-   │ (Pydantic request/response)  │
-   └──────────────┬───────────────┘
+   Client (Swagger UI / curl / CLI chat)
+                  │
                   ▼
-   ┌──────────────────────────────┐
-   │ LangGraph support workflow   │◄── Checkpointer (conversation memory)
-   └──┬──────────┬──────────┬─────┘
-      │          │          │
-      ▼          ▼          ▼
-   LLM via    Retriever   Tools ─────────► Order database (SQLite)
-   LangChain     │          │
-   (Ollama)      ▼          └─ create_ticket ► Tickets (SQLite)
-          Vector store (Chroma)
-                 ▲
-          Ingest script ◄── VoltCart policy documents (markdown)
+   ┌─────────────────────────────────┐
+   │ FastAPI   POST /chat            │   GET /tickets, /health
+   │ Pydantic request and response   │   one lock per conversation
+   └────────────────┬────────────────┘
+                    ▼
+   ┌─────────────────────────────────┐
+   │ LangGraph workflow              │◄── SQLite checkpointer (conversations survive restarts)
+   │ classify → RAG / agent /        │
+   │            escalate / respond   │
+   └───┬─────────────┬───────────┬───┘
+       │             │           │
+       ▼             ▼           ▼
+   qwen2.5:3b    Retriever    Agent tools ──► Order database (SQLite, read-only)
+   (Ollama)          │           └─ search_policies ─► Retriever
+                     ▼
+            Chroma vector store ◄── ingest ◄── data/policies/*.md
+
+   Escalations ──► Tickets (SQLite), with the recent conversation
 ```
 
-### Planned LangGraph workflow
-
-```mermaid
-flowchart TD
-    START([START]) --> C[classify_intent]
-    C -->|policy question| R[retrieve documents]
-    R --> G[generate_answer]
-    G --> K{answer grounded?}
-    K -->|yes| END([END])
-    K -->|no| E[escalate to human]
-    C -->|order issue| A[agent]
-    A <-->|tool calls| T[tools: order lookup, return eligibility]
-    A --> END
-    C -->|angry / wants human / out of scope| E
-    C -->|greeting / small talk| S[respond]
-    S --> END
-    E --> END
-```
-
-The graph grows in stages. **The current graph (Milestone 5):**
+### The LangGraph workflow
 
 ```mermaid
 flowchart LR
@@ -124,9 +183,9 @@ flowchart LR
     E --> END
 ```
 
-### The RAG pipeline
+Each turn starts by resetting the per-turn state, while the conversation itself (`messages`) is kept by the checkpointer between turns.
 
-Built in Milestone 2 and connected to the graph in Milestone 3 as the `retrieve` and `answer` nodes.
+### The RAG pipeline
 
 ```mermaid
 flowchart LR
@@ -138,7 +197,7 @@ flowchart LR
     subgraph Answering["Answering a question"]
         Q[question] --> E2[embed] --> V
         V -->|top 4 chunks<br/>+ source, section| A[answer_question<br/>qwen2.5:3b]
-        A --> O[PolicyAnswer<br/>answer + sources<br/>or 'insufficient']
+        A --> O[PolicyAnswer<br/>answer + sources<br/>or escalate]
     end
 ```
 
@@ -405,8 +464,6 @@ python -m scripts.ask "How much is express shipping?" "Do you offer price matchi
 Actual output:
 
 ```
-Stored 31 chunks. Collection now holds 31 chunks.
-
 Q: How much is express shipping?
    retrieved 0.714  shipping.md > Shipping options and costs
    retrieved 0.581  shipping.md > Where we ship
@@ -488,7 +545,7 @@ So you can try another model once without editing any file.
 
 ---
 
-## How the current code works
+## How the code works
 
 ### `app/config.py`: settings
 
@@ -754,7 +811,7 @@ There are two kinds of tests:
 
 **What `xfail` means:** three tests are marked *expected to fail*, because they describe known limitations we chose not to hide: two from the [Milestone 2 log](#milestone-2-standalone-rag-pipeline-) and one from the [Milestone 6 log](#milestone-6-conversation-memory-). (Milestone 3 had another one, which Milestone 4 fixed.) pytest runs them and reports `XFAIL`. If one starts passing, for example after a model upgrade, pytest reports `XPASS`.
 
-**Passing tests don't prove the RAG is accurate.** They cover 11 retrieval questions and 6 answer questions, all written by hand. Accuracy on a larger set of questions is measured in Milestone 9.
+**Passing tests don't prove the RAG is accurate.** They cover 11 retrieval questions and 6 answer questions, all written by hand. Accuracy on a larger set (52 cases) is measured by the [evaluation](#evaluation).
 
 **How the split works:** `pytest.ini` marks real-model tests with `llm` and skips them by default (`addopts = -m "not llm"`). Running `pytest -m llm` overrides that. `pythonpath = .` lets tests `import app` from the project root.
 
@@ -873,6 +930,11 @@ Every milestone follows the same cycle:
 
 ### Milestone 0: setup and first LLM call ✅
 
+Project setup, Pydantic settings and a first local LLM call; 4 setup problems found and fixed.
+
+<details>
+<summary>Full log</summary>
+
 **Goal:** prove that the whole toolchain works before writing any assistant logic.
 
 **Built:**
@@ -894,7 +956,14 @@ Every milestone follows the same cycle:
 - **The context window is 4096 tokens by default.** RAG chunks and chat history will have to fit inside it, though it can be raised later.
 - **Ollama must be running** before the app is started.
 
+</details>
+
 ### Milestone 1: intent classifier and first LangGraph graph ✅
+
+A Pydantic intent classifier and the first LangGraph graph; two prompt-ambiguity bugs found by probing similar messages.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** turn a customer message into a validated, structured classification and route it through a LangGraph workflow.
 
@@ -920,7 +989,14 @@ Every milestone follows the same cycle:
 - **Each message is classified on its own.** There's no memory of earlier messages until Milestone 6.
 - **About 4 seconds per message** on the CPU.
 
+</details>
+
 ### Milestone 2: standalone RAG pipeline ✅
+
+A standalone RAG pipeline; chunking, duplicates and context size measured; a retrieval miss hidden by a document-level metric; an 8-minute runaway generation capped.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** answer VoltCart policy questions from our own documents, citing the source and refusing when the documents don't contain the answer. It is built and tested on its own and is not yet connected to the graph.
 
@@ -985,7 +1061,14 @@ Every milestone follows the same cycle:
 - **The test sample is small** (11 retrieval and 6 answer questions, written by hand), and answer tests check for one key fact, not the full text.
 - **Not connected to the graph yet.** That's Milestone 3.
 
+</details>
+
 ### Milestone 3: routing policy questions to RAG ✅
+
+Policy questions routed to RAG; unit tests that silently called real models; slowness traced to memory paging.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** connect the Milestone 2 RAG pipeline to the LangGraph workflow with conditional routing, without changing the RAG code.
 
@@ -1029,7 +1112,14 @@ Every milestone follows the same cycle:
 - **Each message is still handled on its own:** no conversation memory until Milestone 6.
 - The Milestone 2 limitations still apply (the warranty hallucination, occasional runaways and terse answers).
 
+</details>
+
 ### Milestone 4: tool calling ✅
+
+A tool-calling agent for orders; an invented order ID blocked in code; a missing database that crashed the conversation.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** handle `order_issue` messages with an agent that calls tools to look up real order data and policies, in a LangGraph agent ⇄ tools loop.
 
@@ -1082,7 +1172,14 @@ The agent **picked the right tool every time.** The problems were in *what it di
 - **Order data is mock data** with dates relative to the seeding day.
 - **15–30 s per order answer** on this machine (memory pressure, see Milestone 3).
 
+</details>
+
 ### Milestone 5: human escalation ✅
+
+Escalation with support tickets; an `angry` label added after measuring over-escalation.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** when the assistant can't or shouldn't handle a message, create a support ticket and tell the customer, instead of a placeholder or a dead end.
 
@@ -1135,7 +1232,14 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **The bot still invents small details** in some order answers ("expected to arrive soon", "seems to be in working condition"). Only angry customers are protected from that by escalation.
 - **"Thanks, that was helpful!" gets the greeting reply** ("Hi! Welcome to VoltCart support…"). It's harmless but awkward.
 
+</details>
+
 ### Milestone 6: conversation memory ✅
+
+Conversation memory; three state-leak bugs caught by tests written first; a silent context overflow; a ticket schema migration.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** remember each conversation (per `thread_id`) so follow-ups like "Can I return it?" work, without the previous turn's results leaking into the next one.
 
@@ -1213,7 +1317,14 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **Trimming counts messages, not tokens.** Very long individual messages could still fill the window.
 - **The full transcript grows in memory** for as long as the program runs; only the prompt is trimmed.
 
+</details>
+
 ### Milestone 7: HTTP API with FastAPI ✅
+
+A FastAPI service; `async def` blocking and lost concurrent messages measured and fixed; persistence checked across a real restart.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** serve the assistant over HTTP, with conversations that survive a server restart, without changing how it answers.
 
@@ -1258,7 +1369,14 @@ I didn't tune further, because tuning the prompt to 11 sentences would be overfi
 - **The damaged-item tool choice is intermittent,** as described above.
 - **`data/conversations.db` keeps every conversation forever;** nothing cleans up old ones.
 
+</details>
+
 ### Milestone 8: testing (coverage, CI and pass rates) ✅
+
+Coverage, CI and pass rates; a flaky-test investigation that disproved my own hypothesis; an encoding mistake repaired.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** most of the originally planned unit and API tests already existed, so this milestone focused on what Milestone 7 exposed: how trustworthy the tests themselves are.
 
@@ -1300,7 +1418,14 @@ What's left is something inside a longer-running test process, which I haven't i
 - **A full pass-rate measurement takes about 25 minutes** for 3 runs on this machine.
 - **The CLI scripts have no tests.**
 
+</details>
+
 ### Milestone 9: evaluation ✅
+
+Evaluation on 52 cases: 79% passed every check, 87% correct for the customer; a confidently wrong answer found.
+
+<details>
+<summary>Full log</summary>
 
 **Goal:** measure the assistant on a fixed, realistic set of cases across every category, including the known hard ones, and find out which failures actually hurt customers.
 
@@ -1338,6 +1463,39 @@ What's left is something inside a longer-running test process, which I haven't i
 - **Each run takes 15–20 minutes** on this machine, and it isn't run in CI.
 - **The failures are measured, not fixed.** Fixing them is the next step.
 
+</details>
+
+### Milestone 10: polish ✅
+
+The README rewritten for first-time readers: an overview, a demo with real outputs, the current architecture, and folded development logs; every link checked.
+
+<details>
+<summary>Full log</summary>
+
+**Goal:** make the repository understandable in a couple of minutes to someone seeing it for the first time, without losing any of the detail.
+
+**Built:**
+- **"At a glance"** at the top: what it does, results, engineering highlights (each linked to the milestone that measured it), and a quick start
+- **A demo section** using only real outputs from earlier runs: a policy answer, an order question with a follow-up, a conversation that continues after a server restart, and two escalations
+- **The current architecture,** replacing a "target design" diagram that still said "Most of it is not built yet" and a "Planned" workflow diagram that no longer matched the code
+- **Folded development logs:** each milestone keeps its heading (so links still work) and a one-line summary, and the full log opens on click
+- **A roadmap with "What could come next"**, based on the evaluation's findings
+
+**Problems hit and how they were fixed:**
+1. **Outdated text in the current-behaviour sections.** A script searched everything above the development log for future-tense and outdated phrases ("When finished", "will be", "until Milestone", "placeholder"…). It found the old intro and diagrams, a stray "Stored 31 chunks" line in the `scripts.ask` example (it came from an ingest run), and "Accuracy… is measured in Milestone 9", which now links to the results. Matches that quote LangGraph's own warning ("will be blocked…") or describe history were deliberately left.
+2. **A demo claim I almost got wrong.** My draft showed the price-matching reply as "ticket #1". The real reply in `eval/results.json` says "ticket #2" (another case had escalated first in that run). The demo now uses the exact text.
+3. **Link check.** After moving sections and folding the logs, a script recomputed GitHub's anchor for every heading and checked all **41 links**: **0 broken anchors, 0 missing files.**
+
+**What we learned:**
+- **A README is read top-down by people in a hurry.** Lead with what it does and what was measured; keep the full story available but folded.
+- **Demo outputs must be real,** and copied from the results rather than written from memory.
+
+**Known limitations:**
+- The development logs are long by design, as the project's full engineering record.
+- The demo outputs come from runs on specific dates, so the dates and ticket numbers will differ in your own run.
+
+</details>
+
 ---
 
 ## Roadmap
@@ -1354,7 +1512,17 @@ What's left is something inside a longer-running test process, which I haven't i
 | 7 | FastAPI | `/chat` and `/tickets` endpoints with Pydantic request/response models | ✅ Done |
 | 8 | Testing | Coverage report, GitHub Actions, pass rates for real-model tests, the flaky-test investigation | ✅ Done |
 | 9 | Evaluation | Golden dataset, routing, retrieval and escalation metrics, results report | ✅ Done |
-| 10 | Polish | Final docs, diagrams, demo | ⏳ Next |
+| 10 | Polish | Final docs, diagrams, demo | ✅ Done |
+
+### What could come next
+
+These come straight from the evaluation's findings, most valuable first:
+
+1. **Stop made-up rules.** Require `check_return_eligibility` for any return question about a specific order (case E05 invented "cannot return… already delivered"), then re-run `scripts/evaluate.py` to measure the effect.
+2. **Fix "my order" misroutes.** General questions that happen to say "my order" (U03) shouldn't be sent to the order agent.
+3. **Compare a larger hosted model.** Add a switchable provider (for example Groq) next to Ollama and run the same 52-case evaluation on both. With Gemini in Milestone 2, a larger model fixed the warranty mix-up immediately.
+4. **Investigate the order-dependent test failure** (the damage-rule case), which is still unexplained.
+5. **Policy follow-ups that use only "it"** ("And how long does it take?"), which the 3B model can't resolve.
 
 ---
 
