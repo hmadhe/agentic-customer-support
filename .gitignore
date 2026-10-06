@@ -9,3 +9,4 @@ data/conversations.db
 data/*.db-shm
 data/*.db-wal
 data/*.db-journal
+.coverage
